@@ -1,0 +1,115 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.iml
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Type checking
+.pyre/
+
+# Secrets & Configuration
+.env
+.env.local
+.env.*.local
+config/bot.yaml
+config/.env
+
+# Data & Ledger
+/data/
+ledger.db
+*.db
+*.db-journal
+/logs/
+*.log
+*.log.*
+
+# VPS Deployment
+deploy.key
+*.pem
+ssh_key
+
+# Backups
+/backups/
+*.bak
+*.backup
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Dependencies (optional, for reproducible builds)
+# requirements.lock
+# poetry.lock
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Node (if any frontend later)
+node_modules/
+npm-debug.log
+
+# Documentation builds
+site/
+docs/_build/
+.doctrees/
+
+# Misc
+.idea/
+*.iml
+out/
