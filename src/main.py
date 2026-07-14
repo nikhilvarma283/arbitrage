@@ -100,14 +100,21 @@ class ArbitrageBot:
 
         client = AlgodClient(token, f"http://{host}:{port}")
 
-        # Verify connection
-        try:
-            status = client.status()
-            logger.info(f"Connected to Algorand node (block {status['last-round']})")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to connect to Algorand node: {e}")
-            raise
+        # Verify connection with retries
+        max_retries = 30
+        retry_delay = 2
+        for attempt in range(max_retries):
+            try:
+                status = client.status()
+                logger.info(f"Connected to Algorand node (block {status['last-round']})")
+                return client
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Attempt {attempt + 1}/{max_retries}: Failed to connect to Algorand - retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    logger.error(f"Failed to connect to Algorand node after {max_retries} attempts: {e}")
+                    raise
 
     def _create_pool_watcher(self) -> PoolWatcher:
         """Create pool watcher from config."""
