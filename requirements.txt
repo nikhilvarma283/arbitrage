@@ -7,7 +7,6 @@ pyyaml==6.0.1
 
 # Database
 SQLAlchemy==2.0.23
-sqlite3-python==1.0.0
 
 # Testing & quality
 pytest==7.4.3
