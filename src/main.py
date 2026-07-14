@@ -14,7 +14,6 @@ from datetime import datetime, date
 from typing import Dict, List, Optional
 import yaml
 from algosdk.v2client.algod import AlgodClient
-from algosdk.error import AlgodHttpError
 
 from src.pool_watcher import PoolWatcher, PoolWatcherConfig, PoolState
 from src.opportunity_engine import OpportunityEngine, OpportunityEngineConfig
@@ -106,7 +105,7 @@ class ArbitrageBot:
             status = client.status()
             logger.info(f"Connected to Algorand node (block {status['last-round']})")
             return client
-        except AlgodHttpError as e:
+        except Exception as e:
             logger.error(f"Failed to connect to Algorand node: {e}")
             raise
 
