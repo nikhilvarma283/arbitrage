@@ -22,7 +22,6 @@ types-PyYAML==6.0.12.11
 
 # Monitoring & alerts
 python-telegram-bot==20.3
-requests-retry==0.1.0
 
 # Async support
 aiohttp==3.9.1
