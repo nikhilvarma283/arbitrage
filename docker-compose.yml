@@ -27,8 +27,7 @@ services:
       dockerfile: Dockerfile
     container_name: arbitrage-bot
     depends_on:
-      algod:
-        condition: service_healthy
+      - algod
     environment:
       - APP_MODE=shadow
       - LOG_LEVEL=INFO
