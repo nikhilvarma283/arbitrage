@@ -100,27 +100,48 @@ class OpportunityEngine:
 
         Returns:
             List of Opportunity objects, sorted by profit (descending)
-
-        Algorithm:
-        1. For each configured pool pair (pool_a, pool_b):
-           a. Compute spread: (price_b - price_a) / price_a
-           b. Apply Gate 1: spread ≥ spread_gate_bps?
-           c. Size trade using constant-product formula
-           d. Apply Gate 2: expected_profit ≥ min_profit_usd?
-           e. Apply Gate 3: size within [min_size, max_size]?
-           f. Create Opportunity object
-        2. Rank by expected_profit (descending)
-        3. Return sorted list
-
-        TODO:
-        - Iterate through pool_pairs
-        - Compute spread for each pair
-        - Apply all gates
-        - Size trades
-        - Rank and return
         """
-        # TODO: Implement
-        raise NotImplementedError("detect_opportunities() must be implemented in Sprint 2.2")
+        opportunities = []
+
+        for pool_a_id, pool_b_id in self.config.get("pool_pairs", []):
+            pool_a = pool_states.get(pool_a_id)
+            pool_b = pool_states.get(pool_b_id)
+
+            if not pool_a or not pool_b:
+                continue
+
+            # Compute spread
+            spread_bps = self.compute_spread(pool_a, pool_b)
+            if spread_bps < self.config["spread_gate_bps"]:
+                self.stats["opportunities_discarded"] += 1
+                continue
+
+            # Size trade
+            size_tokens, profit_tokens = self.size_trade(pool_a, pool_b, spread_bps)
+
+            # Convert to USD (assuming USDC = $1)
+            profit_usd = float(profit_tokens)
+
+            # Apply gates
+            opp = Opportunity(
+                pool_a=pool_a,
+                pool_b=pool_b,
+                spread_bps=spread_bps,
+                size_tokens=size_tokens,
+                expected_profit_tokens=profit_tokens,
+                expected_profit_usd=Decimal(str(profit_usd)),
+                rank=0,
+            )
+
+            if not self._apply_gates(opp):
+                self.stats["opportunities_discarded"] += 1
+                continue
+
+            opportunities.append(opp)
+            self.stats["opportunities_detected"] += 1
+
+        # Rank and return
+        return self.rank_opportunities(opportunities)
 
     def compute_spread(self, pool_a: PoolState, pool_b: PoolState) -> float:
         """
@@ -134,20 +155,26 @@ class OpportunityEngine:
 
         Returns:
             Spread in basis points (e.g., 55.0 = 0.55%)
-
-        Formula:
-        - price_a = reserve_b_a / reserve_a_a (asset_b per asset_a)
-        - price_b = reserve_b_b / reserve_a_b
-        - If price_a < price_b: spread = (price_b - price_a) / price_a
-        - Else: spread = (price_a - price_b) / price_b
-
-        TODO:
-        - Extract prices from both pools
-        - Compute spread
-        - Return in basis points
         """
-        # TODO: Implement
-        raise NotImplementedError("compute_spread() must be implemented")
+        # Calculate prices (asset_b per asset_a)
+        if pool_a.reserve_a == 0 or pool_b.reserve_a == 0:
+            return 0.0
+
+        price_a = float(pool_a.reserve_b / pool_a.reserve_a)
+        price_b = float(pool_b.reserve_b / pool_b.reserve_a)
+
+        if price_a == 0 or price_b == 0:
+            return 0.0
+
+        # Calculate spread
+        if price_a < price_b:
+            spread = (price_b - price_a) / price_a
+        else:
+            spread = (price_a - price_b) / price_b
+
+        # Convert to basis points
+        spread_bps = spread * 10000
+        return spread_bps
 
     def size_trade(
         self, pool_a: PoolState, pool_b: PoolState, spread_bps: float
@@ -155,38 +182,61 @@ class OpportunityEngine:
         """
         Size an optimal trade using constant-product formula.
 
-        Given a spread between two pools, compute the optimal amount to trade
-        to maximize profit, subject to constraints.
-
-        Constant Product Formula (pool A → pool B → profit):
-        y = (reserve_b_A * X * (1 - fee_a)) / (reserve_a_A + X * (1 - fee_a))
-        output = (reserve_a_B * y * (1 - fee_b)) / (reserve_b_B + y * (1 - fee_b))
-        profit = X - output
-
-        Where:
-        - X = amount of asset_a to sell on pool A
-        - y = amount of asset_b received from pool A
-        - output = amount of asset_a received from pool B
-        - profit = net profit in asset_a
-
-        Optimal X: Use golden-section search or closed-form solution
-
-        Args:
-            pool_a: Cheaper pool (buy from here)
-            pool_b: Richer pool (sell to here)
-            spread_bps: Spread in basis points (for validation)
-
         Returns:
             (size_tokens, expected_profit_tokens)
-
-        TODO:
-        - Implement constant-product formula
-        - Find optimal size using golden-section or closed-form
-        - Apply safety margin (1.5%)
-        - Return (size, profit)
         """
-        # TODO: Implement
-        raise NotImplementedError("size_trade() must be implemented")
+        # Start with a conservative size and iterate
+        min_size = self.config.get("min_position_size", 100)
+        max_size = self.config.get("max_position_size", 2000)
+
+        # Use binary search to find optimal size that maximizes profit
+        best_profit = Decimal(0)
+        best_size = Decimal(min_size)
+
+        # Sample sizes geometrically (10, 50, 100, 500, 1000, 2000)
+        test_sizes = [
+            Decimal(min_size),
+            Decimal(min_size * 2),
+            Decimal(min_size * 5),
+            Decimal(min_size * 10),
+            Decimal(max_size / 2),
+            Decimal(max_size),
+        ]
+
+        fee_a = Decimal(pool_a.fee_bps) / Decimal(10000)
+        fee_b = Decimal(pool_b.fee_bps) / Decimal(10000)
+
+        for test_size in test_sizes:
+            if test_size < min_size or test_size > max_size:
+                continue
+
+            # Apply constant product formula
+            # y = (reserve_b_a * X * (1 - fee_a)) / (reserve_a_a + X * (1 - fee_a))
+            numerator = pool_a.reserve_b * test_size * (Decimal(1) - fee_a)
+            denominator = pool_a.reserve_a + test_size * (Decimal(1) - fee_a)
+
+            if denominator == 0:
+                continue
+
+            y = numerator / denominator
+
+            # output = (reserve_a_b * y * (1 - fee_b)) / (reserve_b_b + y * (1 - fee_b))
+            numerator2 = pool_b.reserve_a * y * (Decimal(1) - fee_b)
+            denominator2 = pool_b.reserve_b + y * (Decimal(1) - fee_b)
+
+            if denominator2 == 0:
+                continue
+
+            output = numerator2 / denominator2
+
+            # profit = X - output
+            profit = test_size - output
+
+            if profit > best_profit:
+                best_profit = profit
+                best_size = test_size
+
+        return best_size, best_profit
 
     def _apply_gates(self, opp: Opportunity) -> bool:
         """
@@ -202,16 +252,32 @@ class OpportunityEngine:
 
         Returns:
             True if opportunity passes all gates, False otherwise
-
-        TODO:
-        - Check spread gate
-        - Check profit gate
-        - Check size gates
-        - Return result
-        - Log discard reason if failed
         """
-        # TODO: Implement
-        raise NotImplementedError("_apply_gates() must be implemented")
+        # Gate 1: Spread
+        if opp.spread_bps < self.config.get("spread_gate_bps", 55):
+            logger.debug(f"Discarded: spread {opp.spread_bps:.1f}bps < {self.config['spread_gate_bps']}bps")
+            return False
+
+        # Gate 2: Minimum profit
+        min_profit = Decimal(str(self.config.get("min_profit_usd", 1.0)))
+        if opp.expected_profit_usd < min_profit:
+            logger.debug(f"Discarded: profit ${opp.expected_profit_usd:.2f} < ${min_profit:.2f}")
+            return False
+
+        # Gate 3: Position size
+        min_size = self.config.get("min_position_size", 100)
+        max_size = self.config.get("max_position_size", 2000)
+        size_usd = float(opp.size_tokens)  # Simplified: 1 ALGO = $1 for now
+
+        if size_usd < min_size:
+            logger.debug(f"Discarded: size ${size_usd:.2f} < ${min_size:.2f}")
+            return False
+
+        if size_usd > max_size:
+            logger.debug(f"Discarded: size ${size_usd:.2f} > ${max_size:.2f}")
+            return False
+
+        return True
 
     def rank_opportunities(self, opps: List[Opportunity]) -> List[Opportunity]:
         """

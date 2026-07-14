@@ -58,24 +58,18 @@ class AlertManager:
 
         Returns:
             True if sent successfully
-
-        Message format:
-        ```
-        ✅ Trade Fill!
-        TINYMAN → PACT (ALGO/USDC)
-        Profit: $3.25
-        Gas: $0.10
-        Net: $3.15
-        Time: 2026-07-13 10:23:45 UTC
-        ```
-
-        TODO:
-        - Format message
-        - Send via Telegram API
-        - Log result
         """
-        # TODO: Implement
-        raise NotImplementedError("send_fill() must be implemented")
+        if not self.enabled:
+            return False
+
+        message = f"""✅ Trade Fill!
+{pool_a} → {pool_b}
+Profit: ${profit_usd:.2f}
+Gas: ${gas_usd:.2f}
+Net: ${profit_usd - gas_usd:.2f}
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"""
+
+        return self._send_message(message)
 
     def send_breaker(self, breaker_name: str, reason: str) -> bool:
         """
@@ -87,22 +81,17 @@ class AlertManager:
 
         Returns:
             True if sent successfully
-
-        Message format:
-        ```
-        🚨 BREAKER TRIP: 5_consecutive_failures
-        Reason: Network timeout after 5 retries
-        Bot halted.
-        Time: 2026-07-13 10:23:45 UTC
-        ```
-
-        TODO:
-        - Format message
-        - Send via Telegram
-        - Log critical alert
         """
-        # TODO: Implement
-        raise NotImplementedError("send_breaker() must be implemented")
+        if not self.enabled:
+            return False
+
+        message = f"""🚨 BREAKER TRIP: {breaker_name}
+Reason: {reason}
+Bot halted. Check logs immediately.
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"""
+
+        logger.critical(f"Breaker trip: {breaker_name}")
+        return self._send_message(message)
 
     def send_daily_summary(self, daily_kpi: Dict) -> bool:
         """
@@ -113,23 +102,19 @@ class AlertManager:
 
         Returns:
             True if sent successfully
-
-        Message format:
-        ```
-        📊 Daily Summary - 2026-07-13
-        Opportunities: 156
-        Trades: 48 won, 52 lost
-        Win Rate: 48%
-        Net Profit: $486.32
-        Decay Ratio: 0.94
-        ```
-
-        TODO:
-        - Format message
-        - Send via Telegram
         """
-        # TODO: Implement
-        raise NotImplementedError("send_daily_summary() must be implemented")
+        if not self.enabled:
+            return False
+
+        message = f"""📊 Daily Summary - {daily_kpi.get('date', 'N/A')}
+Opportunities: {daily_kpi.get('opportunities_detected', 0)}
+Avg Spread: {daily_kpi.get('avg_spread_bps', 0):.1f}bps
+Trades: {daily_kpi.get('trades_won', 0)}W / {daily_kpi.get('trades_submitted', 0)}T
+Win Rate: {daily_kpi.get('win_rate', 0):.1f}%
+Net Profit: ${daily_kpi.get('net_profit_usd', 0):.2f}
+Decay Ratio: {daily_kpi.get('decay_ratio', 1.0):.2f}"""
+
+        return self._send_message(message)
 
     def send_error(self, error_msg: str, severity: str = "error") -> bool:
         """
@@ -141,13 +126,17 @@ class AlertManager:
 
         Returns:
             True if sent successfully
-
-        TODO:
-        - Format message with severity indicator
-        - Send via Telegram
         """
-        # TODO: Implement
-        raise NotImplementedError("send_error() must be implemented")
+        if not self.enabled:
+            return False
+
+        emoji = {"warning": "⚠️", "error": "❌", "critical": "🚨"}.get(severity, "ℹ️")
+
+        message = f"""{emoji} {severity.upper()}
+{error_msg}
+Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"""
+
+        return self._send_message(message)
 
     def _send_message(self, message: str) -> bool:
         """
@@ -158,14 +147,27 @@ class AlertManager:
 
         Returns:
             True if sent successfully
-
-        TODO:
-        - Call Telegram API (sendMessage)
-        - Handle errors (retries, rate limits)
-        - Log result
         """
-        # TODO: Implement
-        raise NotImplementedError("_send_message() must be implemented")
+        if not self.enabled:
+            logger.warning("Telegram alerts disabled")
+            return False
+
+        try:
+            import requests
+
+            url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
+            data = {"chat_id": self.chat_id, "text": message}
+
+            response = requests.post(url, data=data, timeout=5)
+            if response.status_code == 200:
+                logger.info("Alert sent to Telegram")
+                return True
+            else:
+                logger.error(f"Telegram API error: {response.status_code} - {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to send Telegram message: {e}")
+            return False
 
 
 class AlertConfig:

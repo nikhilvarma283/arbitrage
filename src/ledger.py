@@ -72,15 +72,79 @@ class Ledger:
         - opportunities: All detected arbitrage opportunities
         - trades: All submitted trade attempts
         - daily_summary: Aggregated KPIs per day
-
-        TODO:
-        - Create opportunities table (pool_a_id, pool_b_id, spread_bps, size, profit, etc.)
-        - Create trades table (tx_group_id, status, actual_profit, gas, etc.)
-        - Create daily_summary table (opportunities_count, win_rate, net_profit, decay_ratio, etc.)
-        - Add indexes on timestamps for fast queries
         """
-        # TODO: Implement schema creation
-        raise NotImplementedError("_create_schema() must be implemented in Sprint 2.3")
+        cursor = self.conn.cursor()
+
+        # Opportunities table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS opportunities (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                block_number INTEGER NOT NULL,
+                pool_a_id INTEGER NOT NULL,
+                pool_b_id INTEGER NOT NULL,
+                pool_a_name TEXT,
+                pool_b_name TEXT,
+                spread_bps REAL NOT NULL,
+                size_tokens REAL NOT NULL,
+                size_usd REAL NOT NULL,
+                expected_profit_tokens REAL NOT NULL,
+                expected_profit_usd REAL NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Trades table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tx_group_id TEXT UNIQUE NOT NULL,
+                timestamp DATETIME NOT NULL,
+                pool_a_id INTEGER NOT NULL,
+                pool_b_id INTEGER NOT NULL,
+                spread_bps REAL NOT NULL,
+                size_tokens REAL NOT NULL,
+                size_usd REAL NOT NULL,
+                expected_profit_usd REAL NOT NULL,
+                actual_profit_usd REAL,
+                gas_spent_usd REAL,
+                status TEXT NOT NULL,
+                reason TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                settled_at DATETIME
+            )
+            """
+        )
+
+        # Daily summary table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS daily_summary (
+                date DATE PRIMARY KEY,
+                opportunities_detected INTEGER DEFAULT 0,
+                avg_spread_bps REAL DEFAULT 0,
+                trades_submitted INTEGER DEFAULT 0,
+                trades_won INTEGER DEFAULT 0,
+                win_rate REAL DEFAULT 0,
+                total_profit_usd REAL DEFAULT 0,
+                total_gas_usd REAL DEFAULT 0,
+                net_profit_usd REAL DEFAULT 0,
+                decay_ratio REAL DEFAULT 1.0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # Create indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_opp_timestamp ON opportunities(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_timestamp ON trades(timestamp)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_trade_status ON trades(status)")
+
+        self.conn.commit()
+        logger.info("Database schema created/verified")
 
     def log_opportunity(self, opp: Opportunity) -> int:
         """
@@ -91,22 +155,37 @@ class Ledger:
 
         Returns:
             Row ID of inserted opportunity
-
-        Fields logged:
-        - timestamp, block_number
-        - pool_a_id, pool_b_id, pool_a_name, pool_b_name
-        - spread_bps, size_tokens, size_usd
-        - expected_profit_tokens, expected_profit_usd
-        - created_at (insertion time)
-
-        TODO:
-        - Convert opp to SQL INSERT
-        - Handle Decimal types (convert to float for SQLite)
-        - Log success/error
-        - Return row ID
         """
-        # TODO: Implement
-        raise NotImplementedError("log_opportunity() must be implemented")
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO opportunities
+                (timestamp, block_number, pool_a_id, pool_b_id, pool_a_name, pool_b_name,
+                 spread_bps, size_tokens, size_usd, expected_profit_tokens, expected_profit_usd)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    datetime.now(),
+                    opp.pool_a.updated_at,
+                    opp.pool_a.pool_id,
+                    opp.pool_b.pool_id,
+                    opp.pool_a.pool_name,
+                    opp.pool_b.pool_name,
+                    opp.spread_bps,
+                    float(opp.size_tokens),
+                    float(opp.size_tokens),  # Simplified: 1 token = $1
+                    float(opp.expected_profit_tokens),
+                    float(opp.expected_profit_usd),
+                ),
+            )
+            self.conn.commit()
+            row_id = cursor.lastrowid
+            logger.debug(f"Logged opportunity: {opp} (row {row_id})")
+            return row_id
+        except Exception as e:
+            logger.error(f"Failed to log opportunity: {e}")
+            raise
 
     def log_trade(
         self,
@@ -124,14 +203,35 @@ class Ledger:
 
         Returns:
             Row ID of inserted trade
-
-        TODO:
-        - Insert trade with status="submitted"
-        - Store opportunity details
-        - Mark timestamp
         """
-        # TODO: Implement
-        raise NotImplementedError("log_trade() must be implemented")
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO trades
+                (tx_group_id, timestamp, pool_a_id, pool_b_id, spread_bps,
+                 size_tokens, size_usd, expected_profit_usd, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tx_group_id,
+                    timestamp,
+                    opp.pool_a.pool_id,
+                    opp.pool_b.pool_id,
+                    opp.spread_bps,
+                    float(opp.size_tokens),
+                    float(opp.size_tokens),
+                    float(opp.expected_profit_usd),
+                    "submitted",
+                ),
+            )
+            self.conn.commit()
+            row_id = cursor.lastrowid
+            logger.debug(f"Logged trade: {tx_group_id} (row {row_id})")
+            return row_id
+        except Exception as e:
+            logger.error(f"Failed to log trade: {e}")
+            raise
 
     def update_trade_result(
         self,
@@ -150,15 +250,34 @@ class Ledger:
             actual_profit_usd: Actual profit realized (if won)
             gas_spent_usd: Gas/fee costs
             reason: Reason for failure (if applicable)
-
-        TODO:
-        - Find trade by tx_group_id
-        - Update status, profit, gas, reason
-        - Update settled_at timestamp
-        - Log any discrepancies (e.g., negative profit should be impossible)
         """
-        # TODO: Implement
-        raise NotImplementedError("update_trade_result() must be implemented")
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                UPDATE trades
+                SET status = ?, actual_profit_usd = ?, gas_spent_usd = ?, reason = ?, settled_at = ?
+                WHERE tx_group_id = ?
+                """,
+                (
+                    status,
+                    actual_profit_usd,
+                    gas_spent_usd,
+                    reason,
+                    datetime.now(),
+                    tx_group_id,
+                ),
+            )
+            self.conn.commit()
+
+            # Alert if negative profit (should never happen with Layer 0 on-chain assertion)
+            if actual_profit_usd is not None and actual_profit_usd < 0:
+                logger.critical(f"NEGATIVE PROFIT DETECTED: {tx_group_id} = ${actual_profit_usd:.2f}")
+
+            logger.debug(f"Updated trade: {tx_group_id} -> {status}")
+        except Exception as e:
+            logger.error(f"Failed to update trade result: {e}")
+            raise
 
     def get_daily_summary(self, date) -> Dict:
         """
@@ -168,25 +287,73 @@ class Ledger:
             date: Date to summarize (datetime.date)
 
         Returns:
-            Dict with:
-            - opportunities_detected: count
-            - avg_spread_bps: average spread
-            - trades_submitted: count
-            - trades_won: count
-            - win_rate: won / submitted
-            - total_profit_usd: sum of profits
-            - total_gas_usd: sum of fees/tips
-            - net_profit_usd: profit - gas
-            - decay_ratio: (profit today) / (profit 7 days ago)
-
-        TODO:
-        - Query opportunities for date range
-        - Query trades for date range
-        - Compute metrics
-        - Calculate decay_ratio if applicable
+            Dict with KPIs
         """
-        # TODO: Implement
-        raise NotImplementedError("get_daily_summary() must be implemented")
+        try:
+            cursor = self.conn.cursor()
+
+            # Query opportunities for the day
+            cursor.execute(
+                """
+                SELECT COUNT(*), AVG(spread_bps) FROM opportunities
+                WHERE DATE(timestamp) = ?
+                """,
+                (date,),
+            )
+            opp_count, avg_spread = cursor.fetchone()
+            opp_count = opp_count or 0
+            avg_spread = avg_spread or 0
+
+            # Query trades for the day
+            cursor.execute(
+                """
+                SELECT COUNT(*), SUM(actual_profit_usd), SUM(gas_spent_usd),
+                       COUNT(CASE WHEN status = 'won' THEN 1 END)
+                FROM trades
+                WHERE DATE(timestamp) = ?
+                """,
+                (date,),
+            )
+            trades_count, total_profit, total_gas, trades_won = cursor.fetchone()
+            trades_count = trades_count or 0
+            total_profit = total_profit or 0
+            total_gas = total_gas or 0
+            trades_won = trades_won or 0
+
+            win_rate = (trades_won / trades_count * 100) if trades_count > 0 else 0
+            net_profit = total_profit - total_gas
+
+            # Calculate decay_ratio (7 days ago vs today)
+            decay_ratio = 1.0
+            cursor.execute(
+                """
+                SELECT SUM(actual_profit_usd) FROM trades
+                WHERE DATE(timestamp) = DATE(?, '-7 days')
+                """,
+                (date,),
+            )
+            past_profit = cursor.fetchone()[0] or 1
+            if past_profit > 0:
+                decay_ratio = net_profit / past_profit
+
+            summary = {
+                "date": str(date),
+                "opportunities_detected": opp_count,
+                "avg_spread_bps": float(avg_spread),
+                "trades_submitted": trades_count,
+                "trades_won": trades_won,
+                "win_rate": win_rate,
+                "total_profit_usd": float(total_profit),
+                "total_gas_usd": float(total_gas),
+                "net_profit_usd": float(net_profit),
+                "decay_ratio": float(decay_ratio),
+            }
+
+            logger.info(f"Daily summary {date}: {summary['net_profit_usd']:.2f} net")
+            return summary
+        except Exception as e:
+            logger.error(f"Failed to compute daily summary: {e}")
+            raise
 
     def get_weekly_summary(self, date) -> Dict:
         """Get weekly KPIs (last 7 days from date)."""
@@ -222,14 +389,28 @@ class Ledger:
 
         Returns:
             True if valid, False if corrupted
-
-        TODO:
-        - Run PRAGMA integrity_check
-        - Check for impossible values (negative profits, etc.)
-        - Log any issues
         """
-        # TODO: Implement
-        raise NotImplementedError("validate() must be implemented")
+        try:
+            cursor = self.conn.cursor()
+
+            # Check integrity
+            cursor.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()[0]
+            if result != "ok":
+                logger.error(f"Database integrity check failed: {result}")
+                return False
+
+            # Check for impossible values
+            cursor.execute("SELECT COUNT(*) FROM trades WHERE actual_profit_usd < 0")
+            if cursor.fetchone()[0] > 0:
+                logger.error("Found negative profits in trades (impossible)")
+                return False
+
+            logger.info("Database validation passed")
+            return True
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            return False
 
     def close(self) -> None:
         """Close database connection."""

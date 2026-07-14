@@ -33,6 +33,9 @@ aiohttp==3.9.1
 python-dotenv==1.0.0
 click==8.1.7
 
+# HTTP requests (for Telegram alerts, RPC calls)
+requests==2.31.0
+
 # Optional: Development
 ipython==8.18.1
 jupyter==1.0.0
