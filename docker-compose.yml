@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  # Algorand full node (non-archival, mainnet)
+  algod:
+    image: algorand/algod:latest
+    container_name: arbitrage-algod
+    ports:
+      - "4001:4001"    # Node API
+      - "4002:4002"    # Kmd API
+    environment:
+      - NETWORK=mainnet
+    volumes:
+      - algod_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Main arbitrage bot (shadow mode by default)
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbitrage-bot
+    depends_on:
+      algod:
+        condition: service_healthy
+    environment:
+      - APP_MODE=shadow
+      - LOG_LEVEL=INFO
+      - ALGOD_HOST=algod
+      - ALGOD_PORT=4001
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    volumes:
+      - ./config/bot.yaml:/app/config/bot.yaml
+      - ./config/.env:/app/config/.env
+      - bot_data:/data
+      - ./src:/app/src
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  # Optional: Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: arbitrage-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  # Optional: Grafana dashboards
+  grafana:
+    image: grafana/grafana:latest
+    container_name: arbitrage-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    depends_on:
+      - prometheus
+
+volumes:
+  algod_data:
+    driver: local
+  bot_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  default:
+    name: arbitrage-network

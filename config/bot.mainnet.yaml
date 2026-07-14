@@ -1,0 +1,123 @@
+# Production Configuration - Algorand Mainnet
+# Copy to bot.yaml and update with your settings
+
+app:
+  mode: "shadow"  # Change to "live" after Gate 0 passes
+  log_level: "INFO"
+  log_file: "/data/logs/bot.log"
+
+# Algorand blockchain configuration (mainnet)
+blockchain:
+  network: "mainnet"
+  algod_host: "localhost"  # Or cloud provider
+  algod_port: 4001
+  algod_token: ""  # Leave empty for public nodes
+
+# Pool configuration (Algorand mainnet pools)
+pools:
+  # Tinyman v2 ALGO/USDC pool
+  - name: "TINYMAN_ALGO_USDC"
+    dex: "tinyman"
+    pool_id: 430731383
+    asset_a_id: 0  # ALGO
+    asset_b_id: 31566704  # USDC
+    fee_bps: 25  # 0.25% fee
+    enabled: true
+
+  # Pact DEX ALGO/USDC pool
+  - name: "PACT_ALGO_USDC"
+    dex: "pact"
+    pool_id: 729405934
+    asset_a_id: 0  # ALGO
+    asset_b_id: 31566704  # USDC
+    fee_bps: 25
+    enabled: true
+
+# Opportunity detection settings
+opportunity_engine:
+  spread_gate_bps: 55  # Minimum spread (0.55%)
+  min_profit_tokens: 0.001  # Minimum profit (ALGO)
+  min_profit_usd: 1.0  # Minimum profit ($)
+  max_position_size: 2000  # Maximum trade size ($)
+  min_position_size: 100  # Minimum trade size ($)
+  profit_margin: 0.015  # Safety margin (1.5%)
+
+  # Pool pairs to monitor
+  pool_pairs:
+    - [430731383, 729405934]  # TINYMAN → PACT
+
+# Wallet & Hot/Cold storage
+wallet:
+  hot_wallet_address: ""  # Set in .env or KMD
+  hot_wallet_seed_phrase: ""  # NEVER in YAML, use .env
+  max_hot_balance: 2000  # USD equivalent, cap for working float
+
+  # Cold wallet for daily sweeps
+  cold_wallet_address: ""  # Hardware wallet address
+  daily_sweep_threshold: 500  # Sweep when profit > $500
+  daily_sweep_time: "02:00"  # UTC time for automated sweep
+
+# Circuit breaker thresholds (safety)
+safety:
+  # Layer 1: In-bot breakers
+  consecutive_failed_submissions: 5  # Halt after N failures
+  daily_fee_cap_usd: 300  # Halt if daily fees > $300
+  daily_tip_cap_usd: 100  # Halt if daily tips > $100
+  balance_deviation_tolerance_pct: 2  # % deviation from ledger
+
+  # Layer 2: Anomaly ceiling
+  anomaly_spread_multiplier: 3  # Spreads > 3x max halt
+
+  # Layer 3: Watchdog settings
+  watchdog_host: "watchdog.vps"  # Separate VPS
+  watchdog_port: 8888
+  heartbeat_interval_seconds: 30
+  heartbeat_timeout_seconds: 60
+
+  # Layer 4: Structural containment
+  position_size_cap_usd: 2000  # Max per trade
+  kill_switch_file: "/data/kill-switch.flag"  # Emergency halt
+
+# Database & Ledger
+ledger:
+  database_path: "/data/ledger.db"
+  backup_dir: "/data/backups"
+  backup_frequency: "daily"  # hourly, daily, weekly
+  retention_days: 30  # Keep 30 days in main DB
+
+# Alerts & Notifications (Telegram)
+alerts:
+  telegram_enabled: true
+  telegram_bot_token: ""  # Set in .env: TELEGRAM_BOT_TOKEN
+  telegram_chat_id: ""  # Set in .env: TELEGRAM_CHAT_ID
+
+  alert_levels:
+    fills: "info"  # Log successful trades
+    breaker_events: "warning"  # Log circuit breaker trips
+    daily_summary: "info"  # Log daily summary
+    errors: "error"  # Log critical errors
+
+# Monitoring & Health Checks
+monitoring:
+  healthchecks_io_url: ""  # Optional heartbeat URL
+  prometheus_enabled: false  # Optional Prometheus metrics
+  prometheus_port: 9090
+  grafana_enabled: false  # Optional Grafana dashboards
+
+# Dashboard (public metrics)
+dashboard:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+  export_interval_seconds: 60  # Update metrics every 60s
+  public_url: "https://algo-arb.yourdomain.com"  # For docs
+
+# Logging
+logging:
+  console_enabled: true
+  console_level: "INFO"
+  file_enabled: true
+  file_level: "DEBUG"
+  file_path: "/data/logs/bot.log"
+  max_file_size_mb: 100  # Rotate at 100MB
+  backup_count: 10  # Keep 10 rotated logs

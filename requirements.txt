@@ -3,7 +3,6 @@ py-algorand-sdk==2.3.0
 requests==2.31.0
 
 # Data & utilities
-Decimal
 pyyaml==6.0.1
 
 # Database
