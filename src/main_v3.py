@@ -73,15 +73,22 @@ class ArbitrageBotV3:
         self.algod_client = self._create_algod_client()
         self.pools_config = self._load_pools_config()
 
-        # Pool auto-discovery disabled for Gate 0 testing (use confirmed pools only)
-        # TODO: Implement non-destructive discovery that preserves confirmed pool IDs
-        logger.info("Pool discovery: using confirmed pool IDs from pools.lock.json")
+        # Pool auto-discovery enabled - discovers dynamic pools (Pact, Humble Swap, etc.)
+        logger.info("Pool discovery: discovering dynamic pools on startup...")
+        try:
+            discovery = PoolDiscovery(self.algod_client, "config/pools.lock.json")
+            discovery.discover_all()
+            self.pools_config = self._load_pools_config()  # Reload with discovered pools
+            logger.info("✓ Pool discovery completed, config updated")
+        except Exception as e:
+            logger.warning(f"Pool discovery failed, using confirmed pools only: {e}")
+
         confirmed_count = sum(
             1 for dex_pools in self.pools_config.get("dexes", {}).values()
             for pool in dex_pools.values()
             if isinstance(pool, dict) and pool.get("app_id")
         )
-        logger.info(f"✓ Loaded {confirmed_count} pools with confirmed app_ids")
+        logger.info(f"✓ Loaded {confirmed_count} pools with app_ids")
 
         self.watcher = PoolWatcherV2(self.algod_client, self.pools_config, self.config.get("blockchain", {}))
         self.detector = CycleDetector(
