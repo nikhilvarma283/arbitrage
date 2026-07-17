@@ -73,17 +73,9 @@ class ArbitrageBotV3:
         self.algod_client = self._create_algod_client()
         self.pools_config = self._load_pools_config()
 
-        # Pool auto-discovery enabled - discovers dynamic pools (Pact, Humble Swap, etc.)
-        logger.info("Pool discovery: discovering dynamic pools on startup...")
-        try:
-            discovery = PoolDiscovery(self.algod_client)
-            # Discover pools for all asset pairs (ALGO/USDC, ALGO/USDT, USDC/USDT)
-            pairs = [(0, 31566704), (0, 793589522), (31566704, 793589522)]
-            discovery.discover_all(pairs)
-            self.pools_config = self._load_pools_config()  # Reload with discovered pools
-            logger.info("✓ Pool discovery completed, config updated")
-        except Exception as e:
-            logger.warning(f"Pool discovery failed, using confirmed pools only: {e}")
+        # Pool auto-discovery disabled - using hardcoded confirmed pool IDs from config
+        # TODO: Re-enable when algod_client initialization is fixed to pass valid client
+        logger.info("Pool discovery: using confirmed pool IDs from config (dynamic discovery disabled)")
 
         confirmed_count = sum(
             1 for dex_pools in self.pools_config.get("dexes", {}).values()

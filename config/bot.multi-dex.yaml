@@ -21,7 +21,7 @@ dexes:
       - name: "Tinyman ALGO/USDC"
         asset_a: 0
         asset_b: 31566704
-        app_id: null  # To be resolved from validator app
+        app_id: 1002590888  # Confirmed mainnet pool ID
         logicsig_address: null
         fee_bps: 30
 
@@ -29,14 +29,14 @@ dexes:
       - name: "Tinyman ALGO/USDT"
         asset_a: 0
         asset_b: 793589522
-        app_id: null
+        app_id: null  # Pending discovery
         fee_bps: 30
 
       # USDC/USDT pair
       - name: "Tinyman USDC/USDT"
         asset_a: 31566704
         asset_b: 793589522
-        app_id: null
+        app_id: 1002587769  # Confirmed mainnet pool ID
         fee_bps: 30
 
   pact:
