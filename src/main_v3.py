@@ -29,8 +29,16 @@ from algosdk.v2client.algod import AlgodClient
 from src.pool_watcher_v2 import PoolWatcherV2
 from src.cycle_detector import CycleDetector
 from src.simulator import CycleSimulator, StalenessAnalyzer
-from src.ledger import Ledger, CycleRecord
+from src.ledger import Ledger
 from src.pool_discovery import PoolDiscovery
+from collections import namedtuple
+
+CycleRecord = namedtuple('CycleRecord', [
+    'ts_utc', 'block_round', 'route_id', 'cycle_path', 'hops',
+    'raw_spread_log', 'fee_stack_log', 'net_profit_est_usd',
+    'optimal_size_usdc', 'cleared_gate', 'simulate_pass',
+    'staleness_ms', 'would_execute', 'notes'
+])
 
 # Setup logging
 logging.basicConfig(
