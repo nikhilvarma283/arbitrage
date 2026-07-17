@@ -1,0 +1,210 @@
+app:
+  mode: "shadow"
+  name: "Algorand Multi-DEX Atomic Arbitrage Bot"
+  version: "3.0-option-a"
+
+blockchain:
+  network: "testnet"
+  # Using Algo.Dev public testnet API
+  algod_host: "api.testnet.algoexplorer.io"
+  algod_port: 443
+  algod_token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  use_https: true
+
+# Multi-DEX pool configuration
+dexes:
+  tinyman_v2:
+    enabled: true
+    validator_app: 1002541853
+    pools:
+      # ALGO/USDC pair
+      - name: "Tinyman ALGO/USDC"
+        asset_a: 0
+        asset_b: 31566704
+        app_id: null  # To be resolved from validator app
+        logicsig_address: null
+        fee_bps: 30
+
+      # ALGO/USDT pair
+      - name: "Tinyman ALGO/USDT"
+        asset_a: 0
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+      # USDC/USDT pair
+      - name: "Tinyman USDC/USDT"
+        asset_a: 31566704
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+  pact:
+    enabled: true
+    api_endpoint: "https://api.pact.fi"
+    pools:
+      # ALGO/USDC pair
+      - name: "Pact ALGO/USDC"
+        asset_a: 0
+        asset_b: 31566704
+        app_id: null  # To be resolved from Pact API
+        fee_bps: 30
+
+      # ALGO/USDT pair
+      - name: "Pact ALGO/USDT"
+        asset_a: 0
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+      # USDC/USDT pair
+      - name: "Pact USDC/USDT"
+        asset_a: 31566704
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+  humble_swap:
+    enabled: true
+    pools:
+      # ALGO/USDC pair
+      - name: "Humble Swap ALGO/USDC"
+        asset_a: 0
+        asset_b: 31566704
+        app_id: null  # To be discovered
+        fee_bps: 30
+
+      # ALGO/USDT pair
+      - name: "Humble Swap ALGO/USDT"
+        asset_a: 0
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+      # USDC/USDT pair
+      - name: "Humble Swap USDC/USDT"
+        asset_a: 31566704
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+  vestige:
+    enabled: true
+    pools:
+      # ALGO/USDC pair
+      - name: "Vestige ALGO/USDC"
+        asset_a: 0
+        asset_b: 31566704
+        app_id: null  # To be discovered
+        fee_bps: 30
+
+      # ALGO/USDT pair
+      - name: "Vestige ALGO/USDT"
+        asset_a: 0
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+      # USDC/USDT pair
+      - name: "Vestige USDC/USDT"
+        asset_a: 31566704
+        asset_b: 793589522
+        app_id: null
+        fee_bps: 30
+
+# Asset definitions (from CHANGE 6)
+assets:
+  ALGO:
+    id: 0
+    decimals: 6
+    verified: true
+  USDC:
+    id: 31566704
+    decimals: 6
+    verified: true
+  USDT:
+    id: 793589522
+    decimals: 6
+    verified: false  # TODO: verify via indexer
+  goBTC:
+    id: 386192725
+    decimals: 8
+    verified: false  # TODO: verify via indexer
+  goETH:
+    id: 386195940
+    decimals: 8
+    verified: false  # TODO: verify via indexer
+
+# Opportunity detection gates (CHANGE 4, 5)
+gates:
+  # Raw spread (before fees)
+  spread_gate_bps: 30
+
+  # Fee breakeven thresholds (no flash loans - CHANGE 4)
+  fee_breakeven_bps:
+    two_hop: 60    # 0.6% = 60bps (2 × 0.30% fees)
+    three_hop: 90  # 0.9% = 90bps (3 × 0.30% fees)
+
+  # Minimum profit to execute
+  min_profit_usd: 0.75
+
+# Triangular arbitrage paths (max 3 hops - CHANGE 5)
+triangular_paths:
+  # ALGO → USDC → USDT → ALGO
+  - hops:
+      - assets: [0, 31566704]
+      - assets: [31566704, 793589522]
+      - assets: [793589522, 0]
+    max_size_usdc: 2000
+    name: "ALGO ↔ USDC ↔ USDT"
+
+  # ALGO → USDT → USDC → ALGO (reverse)
+  - hops:
+      - assets: [0, 793589522]
+      - assets: [793589522, 31566704]
+      - assets: [31566704, 0]
+    max_size_usdc: 2000
+    name: "ALGO ↔ USDT ↔ USDC"
+
+# Event-driven scanning (CHANGE 1)
+watcher:
+  # Only recompute when pools change (not every block)
+  event_driven: true
+
+  # Metrics to track
+  metrics:
+    - pools_updated_count
+    - cycles_rechecked_count
+    - avg_staleness_ms
+
+# Simulation & staleness (CHANGE 2)
+simulator:
+  enabled: true
+  # Simulate every detected opportunity (fee gate pass)
+  # Measure staleness: detection → simulate wall-clock time
+  log_staleness: true
+
+# Ledger & reporting (CHANGE 3, 7)
+ledger:
+  database_path: "/data/ledger.db"
+  # Log ALL cycles (not just winners)
+  log_all_cycles: true
+
+  # Daily Parquet export
+  export_format: "parquet"
+  export_path: "/data/parquet"
+
+# Gate 0 acceptance criteria (CHANGE 7)
+gate0:
+  duration_days: [14, 30]  # Run for 14-30 days
+  acceptance_criteria:
+    - would_execute_per_day: 10  # >= 10/day average
+    - median_profit_usd: 0.75     # >= $0.75 median
+    - staleness_win_rate: 0.40    # >= 40% win rate from staleness decay
+  stop_threshold: 5  # Stop if < 5/day (market not active enough)
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "/data/logs/bot.log"

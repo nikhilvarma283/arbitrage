@@ -1,0 +1,133 @@
+{
+  "version": "1.0",
+  "generated_at": "2026-07-14T17:00:00Z",
+  "description": "Pool registry with app IDs from all DEXes. EDIT THIS FILE to add actual pool app IDs.",
+  "assets": {
+    "ALGO": 0,
+    "USDC": 31566704,
+    "USDT": 793589522,
+    "goBTC": 386192725,
+    "goETH": 386195940
+  },
+  "dexes": {
+    "tinyman_v2": {
+      "0-31566704": {
+        "dex": "tinyman_v2",
+        "name": "Tinyman ALGO/USDC",
+        "app_id": "TODO_TINYMAN_ALGO_USDC",
+        "logicsig_address": null,
+        "asset_a": 0,
+        "asset_b": 31566704,
+        "fee_bps": 30,
+        "notes": "Find at: tinyman.org or resolve via Validator App 1002541853"
+      },
+      "0-793589522": {
+        "dex": "tinyman_v2",
+        "name": "Tinyman ALGO/USDT",
+        "app_id": "TODO_TINYMAN_ALGO_USDT",
+        "logicsig_address": null,
+        "asset_a": 0,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: tinyman.org"
+      },
+      "31566704-793589522": {
+        "dex": "tinyman_v2",
+        "name": "Tinyman USDC/USDT",
+        "app_id": "TODO_TINYMAN_USDC_USDT",
+        "logicsig_address": null,
+        "asset_a": 31566704,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: tinyman.org"
+      }
+    },
+    "pact": {
+      "0-31566704": {
+        "dex": "pact",
+        "name": "Pact ALGO/USDC",
+        "app_id": "TODO_PACT_ALGO_USDC",
+        "asset_a": 0,
+        "asset_b": 31566704,
+        "fee_bps": 30,
+        "notes": "Fetch from Pact API: https://api.pact.fi/pools"
+      },
+      "0-793589522": {
+        "dex": "pact",
+        "name": "Pact ALGO/USDT",
+        "app_id": "TODO_PACT_ALGO_USDT",
+        "asset_a": 0,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Fetch from Pact API"
+      },
+      "31566704-793589522": {
+        "dex": "pact",
+        "name": "Pact USDC/USDT",
+        "app_id": "TODO_PACT_USDC_USDT",
+        "asset_a": 31566704,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Fetch from Pact API"
+      }
+    },
+    "humble_swap": {
+      "0-31566704": {
+        "dex": "humble_swap",
+        "name": "Humble Swap ALGO/USDC",
+        "app_id": "TODO_HUMBLE_ALGO_USDC",
+        "asset_a": 0,
+        "asset_b": 31566704,
+        "fee_bps": 30,
+        "notes": "Find at: humbleswap.fi or via discovery"
+      },
+      "0-793589522": {
+        "dex": "humble_swap",
+        "name": "Humble Swap ALGO/USDT",
+        "app_id": "TODO_HUMBLE_ALGO_USDT",
+        "asset_a": 0,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: humbleswap.fi"
+      },
+      "31566704-793589522": {
+        "dex": "humble_swap",
+        "name": "Humble Swap USDC/USDT",
+        "app_id": "TODO_HUMBLE_USDC_USDT",
+        "asset_a": 31566704,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: humbleswap.fi"
+      }
+    },
+    "vestige": {
+      "0-31566704": {
+        "dex": "vestige",
+        "name": "Vestige ALGO/USDC",
+        "app_id": "TODO_VESTIGE_ALGO_USDC",
+        "asset_a": 0,
+        "asset_b": 31566704,
+        "fee_bps": 30,
+        "notes": "Find at: vestige.fi or via discovery"
+      },
+      "0-793589522": {
+        "dex": "vestige",
+        "name": "Vestige ALGO/USDT",
+        "app_id": "TODO_VESTIGE_ALGO_USDT",
+        "asset_a": 0,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: vestige.fi"
+      },
+      "31566704-793589522": {
+        "dex": "vestige",
+        "name": "Vestige USDC/USDT",
+        "app_id": "TODO_VESTIGE_USDC_USDT",
+        "asset_a": 31566704,
+        "asset_b": 793589522,
+        "fee_bps": 30,
+        "notes": "Find at: vestige.fi"
+      }
+    }
+  }
+}

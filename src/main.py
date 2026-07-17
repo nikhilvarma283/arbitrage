@@ -96,7 +96,7 @@ class ArbitrageBot:
         blockchain_config = self.config.get("blockchain", {})
         host = blockchain_config.get("algod_host", "localhost")
         port = blockchain_config.get("algod_port", 4001)
-        token = blockchain_config.get("algod_token", "")
+        token = blockchain_config.get("algod_token", "") or "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
         client = AlgodClient(token, f"http://{host}:{port}")
 

@@ -33,6 +33,10 @@ click==8.1.7
 # HTTP requests (for Telegram alerts, RPC calls)
 requests==2.31.0
 
+# Query API
+Flask==3.0.0
+Werkzeug==3.0.1
+
 # Optional: Development
 ipython==8.18.1
 jupyter==1.0.0

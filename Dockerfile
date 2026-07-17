@@ -24,9 +24,12 @@ RUN mkdir -p /data/logs && chmod -R 777 /data
 ENV PYTHONUNBUFFERED=1
 ENV LOG_LEVEL=INFO
 
+# Expose query API port
+EXPOSE 8000
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8000/status || exit 1
 
-# Run bot
-CMD ["python", "-m", "src.main", "--config", "config/bot.yaml"]
+# Run bot v3 (multi-DEX with query API)
+CMD ["python", "-m", "src.main_v3", "--config", "config/bot.multi-dex.yaml"]

@@ -20,7 +20,7 @@ services:
       retries: 3
       start_period: 60s
 
-  # Main arbitrage bot (shadow mode by default)
+  # Main arbitrage bot v3 (multi-DEX, event-driven, query API)
   bot:
     build:
       context: .
@@ -32,11 +32,14 @@ services:
       - APP_MODE=shadow
       - LOG_LEVEL=INFO
       - ALGOD_HOST=algod
-      - ALGOD_PORT=4001
+      - ALGOD_PORT=8080
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+    ports:
+      - "8000:8000"
     volumes:
-      - ./config/bot.yaml:/app/config/bot.yaml
+      - ./config/bot.multi-dex.yaml:/app/config/bot.multi-dex.yaml
+      - ./config/pools.lock.json:/app/config/pools.lock.json
       - ./config/.env:/app/config/.env
       - bot_data:/data
       - ./src:/app/src

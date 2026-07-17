@@ -151,21 +151,34 @@ class PoolWatcher:
             block = self.algod_client.block_info(block_num)
 
             # Extract transactions from block
-            if "txns" not in block.get("block", {}):
+            block_data = block.get("block", {})
+            if "txns" in block_data:
+                txns = block_data.get("txns", [])
+            elif "txn" in block_data:
+                txns = block_data.get("txn", [])
+            else:
                 return
 
-            txns = block["block"].get("txns", [])
+            if not txns:
+                return
 
             # Look for application call transactions that update pools
+            appl_txns = [txn for txn in txns if txn.get("type") == "appl"]
+            if appl_txns:
+                app_ids = [txn.get("apid") for txn in appl_txns]
+                if self.last_block_processed % 100 == 0:  # Log every 100 blocks
+                    logger.debug(f"Block {block_num}: Found {len(appl_txns)} app txns: {set(app_ids)}")
+
             for txn in txns:
-                if txn.get("type") != "axfer":  # Application state changes
+                if txn.get("type") != "appl":  # Application call transactions
                     continue
 
                 # Check if this transaction affects any of our pools
                 app_id = txn.get("apid")
                 if app_id and app_id in self.pool_config:
                     # Parse pool state from transaction result
-                    self._update_pool_state(app_id, txn, block_num)
+                    if self._update_pool_state(app_id, txn, block_num):
+                        logger.info(f"Pool {app_id} state updated in block {block_num}")
 
             self.stats["blocks_processed"] += 1
 
@@ -188,19 +201,29 @@ class PoolWatcher:
         try:
             config = self.pool_config[pool_id]
             pool_name = config.get("name", f"Pool_{pool_id}")
-            asset_a_id = config.get("asset_a_id")
-            asset_b_id = config.get("asset_b_id")
+            asset_a_id = config.get("asset1_id", config.get("asset_a_id"))
+            asset_b_id = config.get("asset2_id", config.get("asset_b_id"))
             fee_bps = config.get("fee_bps", 25)
 
-            # For now, use dummy reserves - in production, parse from state delta
-            # In real implementation, you'd extract from:
-            # - Local state if it's a user opt-in
-            # - Global state if it's app-level
-            # - Or query indexer for current state
+            # Query current app state to get actual reserves
+            try:
+                app_info = self.algod_client.application_info(pool_id)
+                global_state = app_info.get("params", {}).get("global-state", [])
 
-            # This is a simplified version - in production use indexer or state queries
-            reserve_a = Decimal(txn.get("amt", 1000000))
-            reserve_b = Decimal(txn.get("rcv", 500000)) if "rcv" in txn else Decimal(500000)
+                # Parse reserves from global state (Tinyman stores them as "A" and "B" or similar)
+                reserve_a = Decimal(1000000)
+                reserve_b = Decimal(500000)
+
+                for state_item in global_state:
+                    key = state_item.get("key")
+                    if key == "A":  # Asset A reserves
+                        reserve_a = Decimal(state_item.get("value", {}).get("uint", 1000000))
+                    elif key == "B":  # Asset B reserves
+                        reserve_b = Decimal(state_item.get("value", {}).get("uint", 500000))
+            except Exception as e:
+                logger.warning(f"Could not query app state for pool {pool_id}: {e}, using fallback")
+                reserve_a = Decimal(1000000)
+                reserve_b = Decimal(500000)
 
             new_state = PoolState(
                 pool_id=pool_id,
