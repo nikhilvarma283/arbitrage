@@ -4,11 +4,11 @@ app:
   version: "3.0-option-a"
 
 blockchain:
-  network: "testnet"
-  # Using Algo.Dev public testnet API
-  algod_host: "api.testnet.algoexplorer.io"
+  network: "mainnet"
+  # Using AlgoNode public mainnet API
+  algod_host: "mainnet-api.algonode.cloud"
   algod_port: 443
-  algod_token: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  algod_token: ""
   use_https: true
 
 # Multi-DEX pool configuration

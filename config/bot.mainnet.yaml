@@ -9,9 +9,10 @@ app:
 # Algorand blockchain configuration (mainnet)
 blockchain:
   network: "mainnet"
-  algod_host: "localhost"  # Or cloud provider
-  algod_port: 4001
+  algod_host: "mainnet-api.algonode.cloud"  # Public AlgoNode endpoint
+  algod_port: 443
   algod_token: ""  # Leave empty for public nodes
+  use_https: true
 
 # Pool configuration (Algorand mainnet pools)
 pools:
