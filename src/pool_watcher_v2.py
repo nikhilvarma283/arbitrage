@@ -108,8 +108,11 @@ class PoolWatcherV2:
         logger.info("Initializing pool states...")
         initialized_count = 0
 
-        for dex, dex_pools in self.pools_config.get("dexes", {}).items():
-            for pool_info in dex_pools.values():
+        for dex, dex_config in self.pools_config.get("dexes", {}).items():
+            # Pools can be either list or dict format
+            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
+
+            for pool_info in pools_list:
                 if not isinstance(pool_info, dict) or not pool_info.get("app_id"):
                     continue
 
@@ -119,7 +122,7 @@ class PoolWatcherV2:
                     initialized_count += 1
                     logger.debug(f"Initialized pool {app_id} ({dex})")
                 except Exception as e:
-                    logger.warning(f"Could not initialize pool {app_id}: {e}")
+                    logger.debug(f"Could not initialize pool {app_id}: {e}")
 
         logger.info(f"✓ Initialized {initialized_count} pools")
 
@@ -231,8 +234,9 @@ class PoolWatcherV2:
 
     def _is_configured_pool(self, app_id: int) -> bool:
         """Check if app_id is one of our configured pools."""
-        for dex_pools in self.pools_config.get("dexes", {}).values():
-            for pair, pool_info in dex_pools.items():
+        for dex_config in self.pools_config.get("dexes", {}).values():
+            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
+            for pool_info in pools_list:
                 if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
                     return True
         return False
@@ -294,24 +298,27 @@ class PoolWatcherV2:
 
     def _get_pool_dex(self, app_id: int) -> str:
         """Get DEX name for pool app_id."""
-        for dex, dex_pools in self.pools_config.get("dexes", {}).items():
-            for pool_info in dex_pools.values():
+        for dex, dex_config in self.pools_config.get("dexes", {}).items():
+            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
+            for pool_info in pools_list:
                 if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
                     return dex
         return "unknown"
 
     def _get_pool_asset_a(self, app_id: int) -> int:
         """Get asset_a for pool app_id."""
-        for dex_pools in self.pools_config.get("dexes", {}).values():
-            for pool_info in dex_pools.values():
+        for dex_config in self.pools_config.get("dexes", {}).values():
+            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
+            for pool_info in pools_list:
                 if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
                     return pool_info.get("asset_a", 0)
         return 0
 
     def _get_pool_asset_b(self, app_id: int) -> int:
         """Get asset_b for pool app_id."""
-        for dex_pools in self.pools_config.get("dexes", {}).values():
-            for pool_info in dex_pools.values():
+        for dex_config in self.pools_config.get("dexes", {}).values():
+            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
+            for pool_info in pools_list:
                 if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
                     return pool_info.get("asset_b", 0)
         return 0
