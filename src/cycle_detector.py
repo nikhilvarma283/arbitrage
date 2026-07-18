@@ -58,14 +58,20 @@ class CycleDetector:
         })
         self.min_profit_usd = gates.get("min_profit_usd", 0.75)
 
-        # Pools with near-zero raw reserves (e.g. an abandoned/dust pool)
-        # produce implied prices that are meaningless and can generate
-        # wildly incorrect "profit" estimates once combined with the
-        # simplified linear-slippage model below. Require both sides of a
-        # pool to hold at least this many raw base units (default 1,000,000
-        # -- i.e. 1.0 token for any 6-decimal asset) before it's eligible
-        # for cycle detection at all.
-        self.min_pool_reserve_raw = gates.get("min_pool_reserve_raw", 1_000_000)
+        # Pools with thin reserves (an abandoned pool, or one that just
+        # never attracted liquidity) produce implied prices that are
+        # meaningless at the $500 notional size this bot assumes, and get
+        # wildly amplified by the simplified linear-slippage profit model
+        # below. Confirmed live: a Pact USDC/USDT pool with genuine but tiny
+        # on-chain reserves (~36 USDC / ~333 USDT, a few hundred dollars
+        # total) produced a "raw" spread vs Tinyman's much deeper USDC/USDT
+        # pool that the linear model turned into a $3,700+ "profit" estimate
+        # on a $500 trade -- not a bug in the math, just real data from an
+        # illiquid pool being fed into a model that assumes real depth.
+        # Require both sides of a pool to hold at least this many raw base
+        # units (default 100,000,000 -- i.e. 100.0 tokens for any 6-decimal
+        # asset) before it's eligible for cycle detection at all.
+        self.min_pool_reserve_raw = gates.get("min_pool_reserve_raw", 100_000_000)
 
         # Build pool lookup
         self.pools_by_id = {}  # app_id -> pool_info
