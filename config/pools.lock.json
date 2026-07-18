@@ -1,47 +1,94 @@
 {
-  "version": "1.0",
-  "generated_at": "2026-07-14T20:45:00Z",
-  "status": "PARTIAL - 3 confirmed IDs + SDK discovery for remaining",
-  "discovery_method": "manual_verification + SDK_programmatic_discovery",
+  "version": "2.0",
+  "generated_at": "2026-07-19T00:00:00Z",
+  "status": "VERIFIED - all entries confirmed to exist on mainnet via direct query",
+  "discovery_method": "manual_verification against mainnet-api.algonode.cloud and public DEX APIs (Tinyman analytics, Pact API)",
   "assets": {
     "ALGO": 0,
     "USDC": 31566704,
-    "USDT": 793589522,
+    "USDT": 312769,
     "goBTC": 386192725,
     "goETH": 386195940
   },
   "dexes": {
     "tinyman_v2": {
-      "31566704-793589522": {
-        "dex": "tinyman_v2",
-        "name": "Tinyman USDC/USDT",
-        "app_id": 1002587769,
-        "asset_a": 31566704,
-        "asset_b": 793589522,
-        "fee_bps": 30,
-        "verified": true,
-        "source": "transaction_data"
-      },
       "0-31566704": {
         "dex": "tinyman_v2",
         "name": "Tinyman ALGO/USDC",
+        "protocol": "tinyman_v2",
         "app_id": 1002590888,
+        "address": "2PIFZW53RHCSFSYMCFUBW4XOCXOMB7XOYQSQ6KGT3KVGJTL4HM6COZRNMM",
+        "validator_app": 1002541853,
         "asset_a": 0,
         "asset_b": 31566704,
         "fee_bps": 30,
         "verified": true,
-        "source": "transaction_data"
+        "source": "mainnet-idx.algonode.cloud account local-state, confirmed 2026-07-19"
       },
-      "0-793589522": {
+      "0-312769": {
         "dex": "tinyman_v2",
         "name": "Tinyman ALGO/USDT",
-        "app_id": null,
+        "protocol": "tinyman_v2",
+        "app_id": 1002587235,
+        "address": "MM4NTQDAT32TSVDE65YXYUPDFVMVP2LUREJCQ4PJV4MFQCW5VV23Y5SEHM",
+        "validator_app": 1002541853,
         "asset_a": 0,
-        "asset_b": 793589522,
+        "asset_b": 312769,
         "fee_bps": 30,
-        "verified": false,
-        "source": "sdk_discovery_pending",
-        "discovery_method": "tinyman-py-sdk plus Validator App 1002541853"
+        "verified": true,
+        "source": "mainnet-idx.algonode.cloud account local-state, confirmed 2026-07-19"
+      },
+      "31566704-312769": {
+        "dex": "tinyman_v2",
+        "name": "Tinyman USDC/USDT",
+        "protocol": "tinyman_v2",
+        "app_id": 1002587769,
+        "address": "CPMRVP35L6J6Y2D5TXG4ODNKT7GQFOZLCJ5CHF2KCDHCM4UF47FQ5UWSQI",
+        "validator_app": 1002541853,
+        "asset_a": 31566704,
+        "asset_b": 312769,
+        "fee_bps": 30,
+        "verified": true,
+        "source": "mainnet-idx.algonode.cloud account local-state, confirmed 2026-07-19"
+      }
+    },
+    "pact": {
+      "0-31566704": {
+        "dex": "pact",
+        "name": "Pact ALGO/USDC",
+        "protocol": "pact",
+        "app_id": 1073557308,
+        "asset_a": 0,
+        "asset_b": 31566704,
+        "fee_bps": 30,
+        "verified": true,
+        "source": "api.pact.fi + mainnet-api.algonode.cloud application global-state, confirmed 2026-07-19"
+      },
+      "0-312769": {
+        "dex": "pact",
+        "name": "Pact ALGO/USDT",
+        "protocol": "pact",
+        "app_id": 3324282434,
+        "asset_a": 0,
+        "asset_b": 312769,
+        "fee_bps": 100,
+        "verified": true,
+        "note": "real pool but near-zero liquidity (A=1550, B=650 raw units) as of confirmation",
+        "source": "api.pact.fi + mainnet-api.algonode.cloud application global-state, confirmed 2026-07-19"
+      },
+      "31566704-312769": {
+        "dex": "pact",
+        "name": "Pact USDC/USDT",
+        "protocol": "pact",
+        "app_id": 1013730551,
+        "asset_a": 31566704,
+        "asset_b": 312769,
+        "reserve_a_key": "B",
+        "reserve_b_key": "A",
+        "fee_bps": 4,
+        "verified": true,
+        "note": "Pact's own primary/secondary ordering has USDT as primary (A) and USDC as secondary (B); reserve_a_key/reserve_b_key remap so asset_a/asset_b stay consistent with the Tinyman USDC/USDT entry for cross-DEX comparison",
+        "source": "api.pact.fi + mainnet-api.algonode.cloud application global-state, confirmed 2026-07-19"
       }
     },
     "humble_swap": {
@@ -51,95 +98,28 @@
         "app_id": null,
         "asset_a": 0,
         "asset_b": 31566704,
-        "fee_bps": 30,
         "verified": false,
-        "source": "sdk_discovery_pending"
+        "source": "unverified - api.humble.sh returns wrapped internal asset ids (e.g. tokA=390001) that do not resolve to any existing mainnet asset; excluded until a reliable mapping is found"
       },
-      "0-793589522": {
+      "0-312769": {
         "dex": "humble_swap",
         "name": "Humble Swap ALGO/USDT",
         "app_id": null,
         "asset_a": 0,
-        "asset_b": 793589522,
-        "fee_bps": 30,
+        "asset_b": 312769,
         "verified": false,
-        "source": "sdk_discovery_pending"
+        "source": "unverified - see note above"
       },
-      "31566704-793589522": {
+      "31566704-312769": {
         "dex": "humble_swap",
         "name": "Humble Swap USDC/USDT",
         "app_id": null,
         "asset_a": 31566704,
-        "asset_b": 793589522,
-        "fee_bps": 30,
+        "asset_b": 312769,
         "verified": false,
-        "source": "sdk_discovery_pending"
-      }
-    },
-    "pact": {
-      "0-31566704": {
-        "dex": "pact",
-        "name": "Pact ALGO/USDC",
-        "app_id": null,
-        "asset_a": 0,
-        "asset_b": 31566704,
-        "fee_bps": 25,
-        "verified": false,
-        "source": "sdk_discovery_pending"
-      },
-      "0-793589522": {
-        "dex": "pact",
-        "name": "Pact ALGO/USDT",
-        "app_id": null,
-        "asset_a": 0,
-        "asset_b": 793589522,
-        "fee_bps": 25,
-        "verified": false,
-        "source": "sdk_discovery_pending"
-      },
-      "31566704-793589522": {
-        "dex": "pact",
-        "name": "Pact USDC/USDT",
-        "app_id": null,
-        "asset_a": 31566704,
-        "asset_b": 793589522,
-        "fee_bps": 25,
-        "verified": false,
-        "source": "sdk_discovery_pending"
-      }
-    },
-    "vestige": {
-      "0-31566704": {
-        "dex": "vestige",
-        "name": "Vestige ALGO/USDC",
-        "app_id": null,
-        "asset_a": 0,
-        "asset_b": 31566704,
-        "fee_bps": 30,
-        "verified": false,
-        "source": "indexer_scan_pending"
-      },
-      "0-793589522": {
-        "dex": "vestige",
-        "name": "Vestige ALGO/USDT",
-        "app_id": null,
-        "asset_a": 0,
-        "asset_b": 793589522,
-        "fee_bps": 30,
-        "verified": false,
-        "source": "indexer_scan_pending"
-      },
-      "31566704-793589522": {
-        "dex": "vestige",
-        "name": "Vestige USDC/USDT",
-        "app_id": null,
-        "asset_a": 31566704,
-        "asset_b": 793589522,
-        "fee_bps": 30,
-        "verified": false,
-        "source": "indexer_scan_pending"
+        "source": "unverified - see note above"
       }
     }
   },
-  "notes": "3 pools verified (USDC/USDT, ALGO/USDC on Tinyman). Remaining 9 will be auto-discovered on startup via SDK calls and Algorand Indexer queries."
+  "notes": "6 pools verified real on mainnet (3 Tinyman V2 + 3 Pact). Humble Swap excluded: its public pool list uses an internal wrapped-asset id scheme that could not be resolved to real mainnet asset ids in the time available -- rather than guess, it is left unverified. Vestige was removed entirely: it is a portfolio-tracking / DEX-aggregator analytics site, not a DEX with its own liquidity pools, so it never belonged in this list."
 }

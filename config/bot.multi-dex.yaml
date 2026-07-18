@@ -11,108 +11,24 @@ blockchain:
   algod_token: ""
   use_https: true
 
-# Multi-DEX pool configuration
+# NOTE: pool identification is NOT read from this section. main_v3.py always
+# loads config/pools.lock.json for the actual pool list (app ids / addresses,
+# asset pairs, protocol, fees). This "dexes" block is kept only as
+# human-readable documentation of DEX-level settings that ARE used
+# (enabled flags, API endpoints) -- see pools.lock.json for the real pools.
 dexes:
   tinyman_v2:
     enabled: true
     validator_app: 1002541853
-    pools:
-      # ALGO/USDC pair
-      - name: "Tinyman ALGO/USDC"
-        asset_a: 0
-        asset_b: 31566704
-        app_id: 1002590888  # Confirmed mainnet pool ID
-        logicsig_address: null
-        fee_bps: 30
-
-      # ALGO/USDT pair
-      - name: "Tinyman ALGO/USDT"
-        asset_a: 0
-        asset_b: 793589522
-        app_id: null  # Pending discovery
-        fee_bps: 30
-
-      # USDC/USDT pair
-      - name: "Tinyman USDC/USDT"
-        asset_a: 31566704
-        asset_b: 793589522
-        app_id: 1002587769  # Confirmed mainnet pool ID
-        fee_bps: 30
-
   pact:
     enabled: true
     api_endpoint: "https://api.pact.fi"
-    pools:
-      # ALGO/USDC pair
-      - name: "Pact ALGO/USDC"
-        asset_a: 0
-        asset_b: 31566704
-        app_id: null  # To be resolved from Pact API
-        fee_bps: 30
-
-      # ALGO/USDT pair
-      - name: "Pact ALGO/USDT"
-        asset_a: 0
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
-
-      # USDC/USDT pair
-      - name: "Pact USDC/USDT"
-        asset_a: 31566704
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
-
   humble_swap:
-    enabled: true
-    pools:
-      # ALGO/USDC pair
-      - name: "Humble Swap ALGO/USDC"
-        asset_a: 0
-        asset_b: 31566704
-        app_id: null  # To be discovered
-        fee_bps: 30
-
-      # ALGO/USDT pair
-      - name: "Humble Swap ALGO/USDT"
-        asset_a: 0
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
-
-      # USDC/USDT pair
-      - name: "Humble Swap USDC/USDT"
-        asset_a: 31566704
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
-
-  vestige:
-    enabled: true
-    pools:
-      # ALGO/USDC pair
-      - name: "Vestige ALGO/USDC"
-        asset_a: 0
-        asset_b: 31566704
-        app_id: null  # To be discovered
-        fee_bps: 30
-
-      # ALGO/USDT pair
-      - name: "Vestige ALGO/USDT"
-        asset_a: 0
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
-
-      # USDC/USDT pair
-      - name: "Vestige USDC/USDT"
-        asset_a: 31566704
-        asset_b: 793589522
-        app_id: null
-        fee_bps: 30
+    enabled: false  # excluded: see pools.lock.json notes (unresolved wrapped asset ids)
 
 # Asset definitions (from CHANGE 6)
+# USDT = 312769 ("Tether USDt" on mainnet). A prior config used 793589522,
+# which is not a real asset on mainnet -- corrected 2026-07-19.
 assets:
   ALGO:
     id: 0
@@ -123,9 +39,9 @@ assets:
     decimals: 6
     verified: true
   USDT:
-    id: 793589522
+    id: 312769
     decimals: 6
-    verified: false  # TODO: verify via indexer
+    verified: true
   goBTC:
     id: 386192725
     decimals: 8
@@ -153,15 +69,15 @@ triangular_paths:
   # ALGO → USDC → USDT → ALGO
   - hops:
       - assets: [0, 31566704]
-      - assets: [31566704, 793589522]
-      - assets: [793589522, 0]
+      - assets: [31566704, 312769]
+      - assets: [312769, 0]
     max_size_usdc: 2000
     name: "ALGO ↔ USDC ↔ USDT"
 
   # ALGO → USDT → USDC → ALGO (reverse)
   - hops:
-      - assets: [0, 793589522]
-      - assets: [793589522, 31566704]
+      - assets: [0, 312769]
+      - assets: [312769, 31566704]
       - assets: [31566704, 0]
     max_size_usdc: 2000
     name: "ALGO ↔ USDT ↔ USDC"

@@ -5,16 +5,26 @@ Replaces per-block polling with efficient event-driven reserve scanning.
 Only recomputes cycles when pools actually change (7% of blocks have updates).
 93% efficiency gain vs naive per-block approach.
 
+Supports two pool protocols:
+- "pact" (default): pool is its own application; reserves live in that
+  application's global state under keys "A" / "B" and fee under "FEE_BPS".
+- "tinyman_v2": all pools share one validator application; each pool is an
+  account that has opted into that application's local state, where reserves
+  live under "asset_1_reserves" / "asset_2_reserves" alongside "asset_1_id" /
+  "asset_2_id" (which we cross-check against our configured asset_a/asset_b
+  so reserve_a always lines up with the configured asset_a regardless of the
+  DEX's own internal ordering convention).
+
 Maintains:
 - Reserve state cache per pool
 - Log-rate cache (only recompute when reserves change)
 - Metrics: pools_updated_count, cycles_rechecked_count per block
 """
 
+import base64
 import logging
 import time
 import requests
-import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Callable
@@ -55,6 +65,22 @@ class PoolState:
         )
 
 
+def _decode_state(entries: List[Dict]) -> Dict[str, object]:
+    """Decode an algod global-state/local-state key-value list into {plain_key: value}."""
+    decoded = {}
+    for item in entries:
+        try:
+            key = base64.b64decode(item["key"]).decode("utf-8", errors="replace")
+        except Exception:
+            continue
+        value = item.get("value", {})
+        if value.get("type") == 2:  # uint
+            decoded[key] = value.get("uint", 0)
+        else:  # bytes
+            decoded[key] = value.get("bytes", "")
+    return decoded
+
+
 class PoolWatcherV2:
     """
     Event-Driven Pool Watcher (CHANGE 1).
@@ -81,9 +107,24 @@ class PoolWatcherV2:
         self.pools_config = pools_config
         self.algod_config = algod_config or {}
 
-        # Pool state cache
+        # Pool state cache (keyed by pool_info["app_id"], which is a unique
+        # identifier for the pool -- an actual application id for pact-style
+        # pools, or the LP token asset id for tinyman_v2-style pools)
         self.pool_states: Dict[int, PoolState] = {}
         self.log_rates: Dict[int, float] = {}
+
+        # Flat list of all configured pool_info dicts (built once)
+        self.configured_pools: List[Dict] = self._flatten_pools()
+
+        # App ids that should trigger a re-check when seen in a block:
+        # a pact-style pool's own app_id, or a tinyman_v2 pool's shared
+        # validator_app.
+        self.trigger_app_ids = set()
+        for pool_info in self.configured_pools:
+            if pool_info.get("protocol") == "tinyman_v2":
+                self.trigger_app_ids.add(pool_info.get("validator_app"))
+            else:
+                self.trigger_app_ids.add(pool_info.get("app_id"))
 
         # Metrics
         self.stats = {
@@ -99,6 +140,18 @@ class PoolWatcherV2:
         # Last block processed
         self.last_block = 0
 
+    def _flatten_pools(self) -> List[Dict]:
+        """Flatten pools.lock.json's {dex: {pair_key: pool_info}} into a list."""
+        pools = []
+        for dex, dex_pools in self.pools_config.get("dexes", {}).items():
+            if not isinstance(dex_pools, dict):
+                continue
+            for pair_key, pool_info in dex_pools.items():
+                if not isinstance(pool_info, dict) or not pool_info.get("app_id"):
+                    continue
+                pools.append(pool_info)
+        return pools
+
     def set_callback(self, callback: Callable) -> None:
         """Set callback for when pools update."""
         self.on_pools_changed = callback
@@ -108,21 +161,14 @@ class PoolWatcherV2:
         logger.info("Initializing pool states...")
         initialized_count = 0
 
-        for dex, dex_config in self.pools_config.get("dexes", {}).items():
-            # Pools can be either list or dict format
-            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
-
-            for pool_info in pools_list:
-                if not isinstance(pool_info, dict) or not pool_info.get("app_id"):
-                    continue
-
-                app_id = pool_info.get("app_id")
-                try:
-                    self._update_pool_state(app_id, block_num)
-                    initialized_count += 1
-                    logger.debug(f"Initialized pool {app_id} ({dex})")
-                except Exception as e:
-                    logger.debug(f"Could not initialize pool {app_id}: {e}")
+        for pool_info in self.configured_pools:
+            pool_id = pool_info.get("app_id")
+            try:
+                self._update_pool_state(pool_info, block_num)
+                initialized_count += 1
+                logger.debug(f"Initialized pool {pool_id} ({pool_info.get('dex')})")
+            except Exception as e:
+                logger.warning(f"Could not initialize pool {pool_id} ({pool_info.get('dex')}): {e}")
 
         logger.info(f"✓ Initialized {initialized_count} pools")
 
@@ -208,22 +254,27 @@ class PoolWatcherV2:
                 self.stats["blocks_processed"] += 1
                 return False
 
-            pools_changed = False
-
-            # Check for pool-related transactions
+            # Does this block touch any app id relevant to our monitored pools?
+            # (a pact-style pool's own app, or a tinyman validator app shared
+            # by potentially many of our tinyman pools)
+            triggered = False
             for txn in txns:
                 if not isinstance(txn, dict):
                     continue
+                if txn.get("type") == "appl" and txn.get("apid") in self.trigger_app_ids:
+                    triggered = True
+                    break
 
-                # Look for app calls to our pools
-                if txn.get("type") == "appl":
-                    app_id = txn.get("apid")
+            if not triggered:
+                self.stats["blocks_processed"] += 1
+                return False
 
-                    if app_id and self._is_configured_pool(app_id):
-                        # Pool might have updated - requery state
-                        if self._update_pool_state(app_id, block_num):
-                            pools_changed = True
-                            self.stats["pools_updated"] += 1
+            # Re-check all configured pools (cheap: single-digit pool count)
+            pools_changed = False
+            for pool_info in self.configured_pools:
+                if self._update_pool_state(pool_info, block_num):
+                    pools_changed = True
+                    self.stats["pools_updated"] += 1
 
             self.stats["blocks_processed"] += 1
             return pools_changed
@@ -232,96 +283,95 @@ class PoolWatcherV2:
             logger.error(f"Error processing block {block_num}: {e}")
             return False
 
-    def _is_configured_pool(self, app_id: int) -> bool:
-        """Check if app_id is one of our configured pools."""
-        for dex_config in self.pools_config.get("dexes", {}).values():
-            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
-            for pool_info in pools_list:
-                if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
-                    return True
-        return False
-
-    def _update_pool_state(self, app_id: int, block_num: int) -> bool:
+    def _update_pool_state(self, pool_info: Dict, block_num: int) -> bool:
         """
         Update pool state from blockchain.
 
+        Args:
+            pool_info: pool entry from pools.lock.json (dict with at least
+                app_id, dex, asset_a, asset_b, and protocol-specific fields)
+            block_num: current block number (for staleness tracking)
+
         Returns: True if state changed, False otherwise
         """
+        pool_id = pool_info.get("app_id")
+        protocol = pool_info.get("protocol", "pact")
+        configured_asset_a = pool_info.get("asset_a")
+        configured_asset_b = pool_info.get("asset_b")
+
         try:
-            # Query app state
-            app_info = self.client.application_info(app_id)
-            global_state = app_info.get("params", {}).get("global-state", [])
+            if protocol == "tinyman_v2":
+                address = pool_info["address"]
+                validator_app = pool_info["validator_app"]
 
-            # Parse reserves from global state
-            # (Tinyman stores them with specific key patterns)
-            reserve_a = Decimal(0)
-            reserve_b = Decimal(0)
+                account_info = self.client.account_info(address)
+                kv = {}
+                for app_ls in account_info.get("apps-local-state", []):
+                    if app_ls.get("id") == validator_app:
+                        kv = _decode_state(app_ls.get("key-value", []))
+                        break
 
-            for state_item in global_state:
-                key = state_item.get("key", "")
-                value = state_item.get("value", {})
+                if not kv:
+                    raise ValueError(f"No local state found for validator app {validator_app} on {address}")
 
-                if isinstance(value, dict) and "uint" in value:
-                    if key in ["A", "reserve_a"]:
-                        reserve_a = Decimal(value.get("uint", 0))
-                    elif key in ["B", "reserve_b"]:
-                        reserve_b = Decimal(value.get("uint", 0))
+                asset_1_id = kv.get("asset_1_id", 0)
+                asset_1_reserves = Decimal(kv.get("asset_1_reserves", 0))
+                asset_2_reserves = Decimal(kv.get("asset_2_reserves", 0))
+                fee_bps = int(kv.get("total_fee_share", pool_info.get("fee_bps", 30)))
 
-            # Create new state
+                if asset_1_id == configured_asset_a:
+                    reserve_a, reserve_b = asset_1_reserves, asset_2_reserves
+                else:
+                    reserve_a, reserve_b = asset_2_reserves, asset_1_reserves
+
+            else:
+                app_info = self.client.application_info(pool_id)
+                global_state = app_info.get("params", {}).get("global-state", [])
+                kv = _decode_state(global_state)
+
+                # Pact-style pools expose reserves under "A"/"B" (primary/
+                # secondary asset per Pact's own ordering, which does not
+                # always match our configured asset_a/asset_b canonical
+                # order). reserve_a_key/reserve_b_key let a pool entry remap
+                # which raw key feeds asset_a vs asset_b so cross-DEX pair
+                # comparisons line up (Pact's app global state does not
+                # expose on-chain asset ids to cross-check automatically).
+                reserve_a_key = pool_info.get("reserve_a_key", "A")
+                reserve_b_key = pool_info.get("reserve_b_key", "B")
+                reserve_a = Decimal(kv.get(reserve_a_key, 0))
+                reserve_b = Decimal(kv.get(reserve_b_key, 0))
+                fee_bps = int(kv.get("FEE_BPS", pool_info.get("fee_bps", 30)))
+
             new_state = PoolState(
-                pool_id=app_id,
-                dex=self._get_pool_dex(app_id),
-                asset_a=self._get_pool_asset_a(app_id),
-                asset_b=self._get_pool_asset_b(app_id),
+                pool_id=pool_id,
+                dex=pool_info.get("dex", "unknown"),
+                asset_a=configured_asset_a,
+                asset_b=configured_asset_b,
                 reserve_a=reserve_a,
                 reserve_b=reserve_b,
-                fee_bps=30,
+                fee_bps=fee_bps,
                 updated_at_block=block_num,
                 updated_at_ts=datetime.now(),
             )
 
             # Check if changed
-            old_state = self.pool_states.get(app_id)
+            old_state = self.pool_states.get(pool_id)
             if old_state == new_state:
                 return False  # No change
 
             # Update cache and log-rate
-            self.pool_states[app_id] = new_state
-            self.log_rates[app_id] = new_state.log_rate
+            self.pool_states[pool_id] = new_state
+            self.log_rates[pool_id] = new_state.log_rate
 
-            logger.info(f"Pool {app_id} updated: reserve_a={reserve_a}, reserve_b={reserve_b}")
+            logger.info(
+                f"Pool {pool_id} ({pool_info.get('dex')}) updated: "
+                f"reserve_a={reserve_a}, reserve_b={reserve_b}, fee_bps={fee_bps}"
+            )
             return True
 
         except Exception as e:
-            logger.warning(f"Could not update pool {app_id}: {e}")
+            logger.warning(f"Could not update pool {pool_id} ({pool_info.get('dex')}): {e}")
             return False
-
-    def _get_pool_dex(self, app_id: int) -> str:
-        """Get DEX name for pool app_id."""
-        for dex, dex_config in self.pools_config.get("dexes", {}).items():
-            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
-            for pool_info in pools_list:
-                if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
-                    return dex
-        return "unknown"
-
-    def _get_pool_asset_a(self, app_id: int) -> int:
-        """Get asset_a for pool app_id."""
-        for dex_config in self.pools_config.get("dexes", {}).values():
-            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
-            for pool_info in pools_list:
-                if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
-                    return pool_info.get("asset_a", 0)
-        return 0
-
-    def _get_pool_asset_b(self, app_id: int) -> int:
-        """Get asset_b for pool app_id."""
-        for dex_config in self.pools_config.get("dexes", {}).values():
-            pools_list = dex_config.get("pools", []) if isinstance(dex_config, dict) else []
-            for pool_info in pools_list:
-                if isinstance(pool_info, dict) and pool_info.get("app_id") == app_id:
-                    return pool_info.get("asset_b", 0)
-        return 0
 
     def get_all_pool_states(self) -> List[PoolState]:
         """Get current state of all pools."""
