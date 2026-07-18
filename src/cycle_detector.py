@@ -58,6 +58,15 @@ class CycleDetector:
         })
         self.min_profit_usd = gates.get("min_profit_usd", 0.75)
 
+        # Pools with near-zero raw reserves (e.g. an abandoned/dust pool)
+        # produce implied prices that are meaningless and can generate
+        # wildly incorrect "profit" estimates once combined with the
+        # simplified linear-slippage model below. Require both sides of a
+        # pool to hold at least this many raw base units (default 1,000,000
+        # -- i.e. 1.0 token for any 6-decimal asset) before it's eligible
+        # for cycle detection at all.
+        self.min_pool_reserve_raw = gates.get("min_pool_reserve_raw", 1_000_000)
+
         # Build pool lookup
         self.pools_by_id = {}  # app_id -> pool_info
         self.pools_by_assets = {}  # (asset_a, asset_b) -> [pool_info, ...]
@@ -103,12 +112,20 @@ class CycleDetector:
         """
         cycles = []
 
+        liquid_states = [
+            ps for ps in pool_states
+            if ps.reserve_a >= self.min_pool_reserve_raw and ps.reserve_b >= self.min_pool_reserve_raw
+        ]
+        dust_excluded = len(pool_states) - len(liquid_states)
+        if dust_excluded:
+            logger.info(f"Excluded {dust_excluded} dust pool(s) below min_pool_reserve_raw={self.min_pool_reserve_raw}")
+
         # Detect direct pairs (2-hop)
-        direct_cycles = self._detect_direct_pairs(pool_states)
+        direct_cycles = self._detect_direct_pairs(liquid_states)
         cycles.extend(direct_cycles)
 
         # Detect triangular cycles (3-hop)
-        triangular_cycles = self._detect_triangular(pool_states)
+        triangular_cycles = self._detect_triangular(liquid_states)
         cycles.extend(triangular_cycles)
 
         logger.info(f"Detected {len(cycles)} cycles (direct: {len(direct_cycles)}, triangular: {len(triangular_cycles)})")
