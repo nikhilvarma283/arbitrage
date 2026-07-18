@@ -91,7 +91,12 @@ class ArbitrageBotV3:
         )
         self.simulator = CycleSimulator(
             self.algod_client,
-            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HVY",  # Placeholder address
+            # Zero-key address (encoding.encode_address(bytes(32))) -- shadow
+            # mode only ever builds unsigned txns for algod simulate() with
+            # allow_empty_signatures=True, never signs or broadcasts, so this
+            # just needs to be a syntactically valid 58-char address. The
+            # previous placeholder here was 57 characters (invalid).
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
             self.config.get("gates", {})
         )
         self.ledger = Ledger(
