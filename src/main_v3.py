@@ -285,86 +285,90 @@ class ArbitrageBotV3:
         """
         try:
             pool_states = self.watcher.get_all_pool_states()
-            # Group DEX pool states we can compare against a Coinbase product:
-            # any ALGO pool whose *other* asset matches the stablecoin id a
-            # configured Coinbase product is being compared against.
-            checked_products = set()
 
+            # Fetch each unique Coinbase product once per poll, then compare
+            # it against every configured stablecoin pairing for that
+            # product (e.g. ALGO-USD is compared against both ALGO/USDC and
+            # ALGO/USDT DEX pools).
+            stables_by_product: Dict[str, List[int]] = {}
             for product_id, stable_asset_id in self.coinbase_products:
-                if product_id in checked_products:
-                    continue  # avoid refetching the same product twice per cycle
-                checked_products.add(product_id)
+                stables_by_product.setdefault(product_id, []).append(stable_asset_id)
 
+            for product_id, stable_asset_ids in stables_by_product.items():
                 cex_price = fetch_coinbase_price(product_id)
                 self.stats["cex_checks"] += 1
                 if cex_price is None:
                     continue
 
-                for ps in pool_states:
-                    # Only ALGO/<stablecoin> pools are comparable to an
-                    # ALGO-USD CEX price; identify ALGO regardless of which
-                    # side of the pool it's stored on.
-                    if ps.asset_a == 0 and ps.asset_b == stable_asset_id:
-                        dex_price = float(ps.reserve_b) / float(ps.reserve_a)
-                    elif ps.asset_b == 0 and ps.asset_a == stable_asset_id:
-                        dex_price = float(ps.reserve_a) / float(ps.reserve_b)
-                    else:
-                        continue
-
-                    if dex_price > cex_price.ask:
-                        # Buy ALGO on Coinbase at ask, sell on the DEX.
-                        gross_gain_frac = (dex_price - cex_price.ask) / cex_price.ask
-                    elif dex_price < cex_price.bid:
-                        # Buy ALGO on the DEX, sell on Coinbase at bid.
-                        gross_gain_frac = (cex_price.bid - dex_price) / dex_price
-                    else:
-                        # dex_price sits inside Coinbase's own bid/ask spread -- no edge.
-                        gross_gain_frac = 0.0
-
-                    if gross_gain_frac <= 0:
-                        continue
-
-                    # Simple additive fee approximation (one DEX swap + one
-                    # CEX taker fill, not a multi-hop log-compounded route
-                    # like the on-chain-only cycles use).
-                    dex_fee_frac = ps.fee_bps / 10000
-                    coinbase_fee_frac = self.coinbase_taker_fee_bps / 10000
-                    total_fee_frac = dex_fee_frac + coinbase_fee_frac
-
-                    net_gain_frac = gross_gain_frac - total_fee_frac
-                    cleared_gate = net_gain_frac >= total_fee_frac * self.detector.breakeven_margin
-
-                    base_size_usd = 500
-                    net_profit_usd = base_size_usd * net_gain_frac if cleared_gate else 0
-
-                    if cleared_gate and net_profit_usd >= self.detector.min_profit_usd:
-                        self.stats["cex_opportunities_detected"] += 1
-                        logger.info(
-                            f"CEX-DEX divergence: {product_id} vs {ps.dex} pool {ps.pool_id} "
-                            f"gross={gross_gain_frac*10000:.1f}bps net=${net_profit_usd:.2f} "
-                            f"(detection only, not executable)"
-                        )
-
-                    record = CycleRecord(
-                        ts_utc=datetime.now(),
-                        block_round=0,
-                        route_id=f"CEX_{product_id}_{ps.pool_id}",
-                        cycle_path=f"{product_id}@coinbase <-> pool {ps.pool_id}@{ps.dex}",
-                        hops=2,
-                        raw_spread_log=gross_gain_frac,
-                        fee_stack_log=total_fee_frac,
-                        net_profit_est_usd=net_profit_usd,
-                        optimal_size_usdc=base_size_usd,
-                        cleared_gate=cleared_gate,
-                        simulate_pass=False,  # no simulate() equivalent for a CEX leg
-                        staleness_ms=0,
-                        would_execute=False,  # no order-placement capability exists
-                        notes="cex_dex_detection_only: two non-atomic legs, not executable by this bot",
-                    )
-                    self.ledger.log_cycle(record)
+                for stable_asset_id in stable_asset_ids:
+                    for ps in pool_states:
+                        self._compare_cex_dex_pair(product_id, stable_asset_id, cex_price, ps)
 
         except Exception as e:
             logger.error(f"Error checking CEX-DEX opportunities: {e}")
+
+    def _compare_cex_dex_pair(self, product_id: str, stable_asset_id: int, cex_price, ps) -> None:
+        """Compare one Coinbase price against one DEX pool state and log the result."""
+        # Only ALGO/<stablecoin> pools are comparable to an ALGO-USD CEX
+        # price; identify ALGO regardless of which side of the pool it's on.
+        if ps.asset_a == 0 and ps.asset_b == stable_asset_id:
+            dex_price = float(ps.reserve_b) / float(ps.reserve_a)
+        elif ps.asset_b == 0 and ps.asset_a == stable_asset_id:
+            dex_price = float(ps.reserve_a) / float(ps.reserve_b)
+        else:
+            return
+
+        if dex_price > cex_price.ask:
+            # Buy ALGO on Coinbase at ask, sell on the DEX.
+            gross_gain_frac = (dex_price - cex_price.ask) / cex_price.ask
+        elif dex_price < cex_price.bid:
+            # Buy ALGO on the DEX, sell on Coinbase at bid.
+            gross_gain_frac = (cex_price.bid - dex_price) / dex_price
+        else:
+            # dex_price sits inside Coinbase's own bid/ask spread -- no edge.
+            gross_gain_frac = 0.0
+
+        if gross_gain_frac <= 0:
+            return
+
+        # Simple additive fee approximation (one DEX swap + one CEX taker
+        # fill, not a multi-hop log-compounded route like the on-chain-only
+        # cycles use).
+        dex_fee_frac = ps.fee_bps / 10000
+        coinbase_fee_frac = self.coinbase_taker_fee_bps / 10000
+        total_fee_frac = dex_fee_frac + coinbase_fee_frac
+
+        net_gain_frac = gross_gain_frac - total_fee_frac
+        cleared_gate = net_gain_frac >= total_fee_frac * self.detector.breakeven_margin
+
+        base_size_usd = 500
+        net_profit_usd = base_size_usd * net_gain_frac if cleared_gate else 0
+
+        if cleared_gate and net_profit_usd >= self.detector.min_profit_usd:
+            self.stats["cex_opportunities_detected"] += 1
+            logger.info(
+                f"CEX-DEX divergence: {product_id} vs {ps.dex} pool {ps.pool_id} "
+                f"gross={gross_gain_frac*10000:.1f}bps net=${net_profit_usd:.2f} "
+                f"(detection only, not executable)"
+            )
+
+        record = CycleRecord(
+            ts_utc=datetime.now(),
+            block_round=0,
+            route_id=f"CEX_{product_id}_{ps.pool_id}",
+            cycle_path=f"{product_id}@coinbase <-> pool {ps.pool_id}@{ps.dex}",
+            hops=2,
+            raw_spread_log=gross_gain_frac,
+            fee_stack_log=total_fee_frac,
+            net_profit_est_usd=net_profit_usd,
+            optimal_size_usdc=base_size_usd,
+            cleared_gate=cleared_gate,
+            simulate_pass=False,  # no simulate() equivalent for a CEX leg
+            staleness_ms=0,
+            would_execute=False,  # no order-placement capability exists
+            notes="cex_dex_detection_only: two non-atomic legs, not executable by this bot",
+        )
+        self.ledger.log_cycle(record)
 
     def _run_cex_dex_poll_loop(self) -> None:
         """Background thread: periodically compare Coinbase vs DEX prices."""
