@@ -104,14 +104,18 @@ class ArbitrageBotV3:
         )
 
         # Statistics
+        # blocks_processed/pools_updated live on the watcher itself (it's the
+        # thing actually processing blocks); read via self.watcher.get_stats()
+        # rather than duplicating counters here that would need to be kept in
+        # sync. staleness_total_ms/staleness_count back a running average of
+        # simulate_cycle()'s staleness_ms across every cycle simulated this run.
         self.stats = {
             "start_time": datetime.now(),
-            "blocks_processed": 0,
-            "pools_updated": 0,
             "cycles_detected": 0,
             "cycles_simulated": 0,
             "would_execute_count": 0,
-            "avg_staleness_ms": 0,
+            "staleness_total_ms": 0,
+            "staleness_count": 0,
         }
 
         # Wire callbacks
@@ -214,6 +218,8 @@ class ArbitrageBotV3:
                 )
 
                 self.stats["cycles_simulated"] += 1
+                self.stats["staleness_total_ms"] += result.staleness_ms
+                self.stats["staleness_count"] += 1
 
                 if result.would_execute:
                     self.stats["would_execute_count"] += 1
@@ -253,17 +259,25 @@ class ArbitrageBotV3:
         def status():
             """Get bot status."""
             uptime = (datetime.now() - self.stats["start_time"]).total_seconds()
+            watcher_stats = self.watcher.get_stats()
+
+            staleness_count = self.stats.get("staleness_count", 0)
+            avg_staleness_ms = (
+                self.stats.get("staleness_total_ms", 0) / staleness_count
+                if staleness_count else 0
+            )
 
             return jsonify({
                 "mode": self.mode,
                 "uptime_seconds": uptime,
                 "status": "running" if self.running else "stopped",
-                "blocks_processed": self.stats["blocks_processed"],
-                "pools_updated": self.stats["pools_updated"],
+                "blocks_processed": watcher_stats.get("blocks_processed", 0),
+                "pools_updated": watcher_stats.get("pools_updated", 0),
+                "missed_blocks": watcher_stats.get("missed_blocks", 0),
                 "cycles_detected": self.stats["cycles_detected"],
                 "cycles_simulated": self.stats["cycles_simulated"],
                 "would_execute_count": self.stats["would_execute_count"],
-                "avg_staleness_ms": int(self.stats.get("avg_staleness_ms", 0)),
+                "avg_staleness_ms": int(avg_staleness_ms),
             })
 
         @self.app.route("/opportunities", methods=["GET"])
