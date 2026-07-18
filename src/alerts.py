@@ -11,7 +11,7 @@ Sprint 2.4 / 4.1: Alerts Implementation
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Dict
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,9 @@ class AlertManager:
         self.chat_id = chat_id
         self.enabled = bool(bot_token and chat_id)
 
-    def send_fill(self, pool_a: str, pool_b: str, profit_usd: float, gas_usd: float) -> bool:
+    def send_fill(
+        self, pool_a: str, pool_b: str, profit_usd: float, gas_usd: float
+    ) -> bool:
         """
         Send alert for successful trade fill.
 
@@ -163,7 +165,9 @@ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}"""
                 logger.info("Alert sent to Telegram")
                 return True
             else:
-                logger.error(f"Telegram API error: {response.status_code} - {response.text}")
+                logger.error(
+                    f"Telegram API error: {response.status_code} - {response.text}"
+                )
                 return False
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")

@@ -7,7 +7,7 @@ Sprint 2.1: Pool Watcher Testing
 import pytest
 from decimal import Decimal
 from datetime import datetime
-from src.pool_watcher import PoolWatcher, PoolState
+from src.pool_watcher import PoolState
 
 
 class TestPoolState:

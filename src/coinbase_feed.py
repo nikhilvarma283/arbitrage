@@ -29,6 +29,7 @@ COINBASE_TICKER_URL = "https://api.exchange.coinbase.com/products/{product_id}/t
 @dataclass
 class CexPrice:
     """A single CEX price snapshot (public market data only)."""
+
     product_id: str
     bid: float
     ask: float
@@ -39,7 +40,9 @@ class CexPrice:
         return (self.bid + self.ask) / 2
 
 
-def fetch_coinbase_price(product_id: str = "ALGO-USD", timeout: float = 5.0) -> Optional[CexPrice]:
+def fetch_coinbase_price(
+    product_id: str = "ALGO-USD", timeout: float = 5.0
+) -> Optional[CexPrice]:
     """
     Fetch current bid/ask for a Coinbase product via the public ticker
     endpoint. Returns None on any failure (network, bad response, product

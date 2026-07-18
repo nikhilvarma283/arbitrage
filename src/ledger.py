@@ -10,7 +10,7 @@ Exports daily Parquet for analysis. Provides funnel aggregation for Gate 0 decis
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, date
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CycleRecord:
     """Single evaluated cycle for full-funnel logging."""
+
     ts_utc: datetime
     block_round: int
     route_id: str
@@ -50,7 +51,12 @@ class Ledger:
 
     def __init__(self, db_path: str):
         self.db_path = db_path
-        self.conn = None
+        # _init_db() always either sets a real Connection or raises
+        # (propagating out of __init__), so by the time any other method
+        # runs on a successfully-constructed Ledger, self.conn is guaranteed
+        # non-None -- but the type itself has to allow for the brief window
+        # before _init_db() runs.
+        self.conn: Optional[sqlite3.Connection] = None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -65,10 +71,12 @@ class Ledger:
 
     def _create_schema(self) -> None:
         """Create full-funnel schema (CHANGE 3)."""
+        assert self.conn is not None  # only called from _init_db after connect()
         cursor = self.conn.cursor()
 
         # Cycles table (all evaluated cycles - CHANGE 3)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS cycles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts_utc DATETIME NOT NULL,
@@ -86,10 +94,12 @@ class Ledger:
                 would_execute BOOLEAN NOT NULL DEFAULT 0,
                 notes TEXT
             )
-        """)
+        """
+        )
 
         # Trades table (Phase 1 live execution)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS trades (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_group_id TEXT UNIQUE NOT NULL,
@@ -104,10 +114,12 @@ class Ledger:
                 reason TEXT,
                 settled_at DATETIME
             )
-        """)
+        """
+        )
 
         # Funnel aggregation (daily summary)
-        cursor.execute("""
+        cursor.execute(
+            """
             CREATE TABLE IF NOT EXISTS funnel_daily (
                 date DATE PRIMARY KEY,
                 raw_cycles_detected INTEGER DEFAULT 0,
@@ -118,13 +130,22 @@ class Ledger:
                 avg_staleness_ms REAL,
                 win_rate_pct REAL
             )
-        """)
+        """
+        )
 
         # Indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cycles_block ON cycles(block_round)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cycles_route ON cycles(route_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cycles_gate ON cycles(cleared_gate)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cycles_execute ON cycles(would_execute)")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycles_block ON cycles(block_round)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycles_route ON cycles(route_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycles_gate ON cycles(cleared_gate)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_cycles_execute ON cycles(would_execute)"
+        )
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status)")
 
         self.conn.commit()
@@ -132,31 +153,36 @@ class Ledger:
 
     def log_cycle(self, record: CycleRecord) -> int:
         """Log an evaluated cycle (raw or filtered)."""
+        assert self.conn is not None  # guaranteed by successful __init__
         try:
             cursor = self.conn.cursor()
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO cycles
                 (ts_utc, block_round, route_id, cycle_path, hops,
                  raw_spread_log, fee_stack_log, net_profit_est_usd, optimal_size_usdc,
                  cleared_gate, simulate_pass, staleness_ms, would_execute, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                record.ts_utc,
-                record.block_round,
-                record.route_id,
-                record.cycle_path,
-                record.hops,
-                record.raw_spread_log,
-                record.fee_stack_log,
-                record.net_profit_est_usd,
-                record.optimal_size_usdc,
-                record.cleared_gate,
-                record.simulate_pass,
-                record.staleness_ms,
-                record.would_execute,
-                record.notes
-            ))
+            """,
+                (
+                    record.ts_utc,
+                    record.block_round,
+                    record.route_id,
+                    record.cycle_path,
+                    record.hops,
+                    record.raw_spread_log,
+                    record.fee_stack_log,
+                    record.net_profit_est_usd,
+                    record.optimal_size_usdc,
+                    record.cleared_gate,
+                    record.simulate_pass,
+                    record.staleness_ms,
+                    record.would_execute,
+                    record.notes,
+                ),
+            )
             self.conn.commit()
+            assert cursor.lastrowid is not None  # always set after a successful INSERT
             return cursor.lastrowid
         except Exception as e:
             logger.error(f"Failed to log cycle: {e}")
@@ -169,11 +195,13 @@ class Ledger:
         Returns:
             Funnel with: raw cycles → fee gate → simulate pass → would_execute
         """
+        assert self.conn is not None  # guaranteed by successful __init__
         try:
             cursor = self.conn.cursor()
 
             # Get cycles in date range
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT
                     COUNT(*) as raw_cycles,
                     SUM(CASE WHEN cleared_gate THEN 1 ELSE 0 END) as fee_gate_pass,
@@ -183,7 +211,9 @@ class Ledger:
                     AVG(CASE WHEN would_execute THEN staleness_ms ELSE NULL END) as avg_staleness
                 FROM cycles
                 WHERE DATE(ts_utc) BETWEEN ? AND ?
-            """, (start_date, end_date))
+            """,
+                (start_date, end_date),
+            )
 
             row = cursor.fetchone()
             days = (end_date - start_date).days + 1
@@ -198,7 +228,7 @@ class Ledger:
                 "avg_per_day": (row["would_execute"] or 0) / days if days > 0 else 0,
                 "median_profit_usd": row["median_profit"],
                 "avg_staleness_ms": row["avg_staleness"],
-                "gate_0_pass": self._check_gate0_pass(row, days)
+                "gate_0_pass": self._check_gate0_pass(row, days),
             }
         except Exception as e:
             logger.error(f"Failed to generate funnel report: {e}")
@@ -223,18 +253,19 @@ class Ledger:
             "avg_per_day": {
                 "value": avg_per_day,
                 "threshold": 10,
-                "pass": avg_per_day >= 10
+                "pass": avg_per_day >= 10,
             },
             "median_profit": {
                 "value": median_profit,
                 "threshold": 0.75,
-                "pass": median_profit >= 0.75
+                "pass": median_profit >= 0.75,
             },
             "staleness_decay": {
                 "value": avg_staleness,
                 "threshold": "40% win rate",
-                "pass": avg_staleness < 500  # Placeholder: staleness < 500ms → ~40% win rate
-            }
+                "pass": avg_staleness
+                < 500,  # Placeholder: staleness < 500ms → ~40% win rate
+            },
         }
 
         overall_pass = all(c["pass"] for c in criteria.values())
@@ -242,7 +273,7 @@ class Ledger:
         return {
             "pass": overall_pass,
             "criteria": criteria,
-            "decision": "PASS to Phase 1" if overall_pass else "FAIL - continue tuning"
+            "decision": "PASS to Phase 1" if overall_pass else "FAIL - continue tuning",
         }
 
     def close(self) -> None:

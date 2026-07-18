@@ -14,11 +14,14 @@ def test_example_with_fixture(mock_pool_state):
     assert mock_pool_state["reserve_a"] > 0
 
 
-@pytest.mark.parametrize("a,b,expected", [
-    (1, 1, 2),
-    (2, 3, 5),
-    (10, 20, 30),
-])
+@pytest.mark.parametrize(
+    "a,b,expected",
+    [
+        (1, 1, 2),
+        (2, 3, 5),
+        (10, 20, 30),
+    ],
+)
 def test_example_parametrized(a, b, expected):
     """Example of parametrized tests."""
     assert a + b == expected

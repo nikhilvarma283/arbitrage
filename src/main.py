@@ -11,14 +11,14 @@ import logging
 import sys
 import time
 from datetime import datetime, date
-from typing import Dict, List, Optional
+from typing import Dict
 import yaml
 from algosdk.v2client.algod import AlgodClient
 
-from src.pool_watcher import PoolWatcher, PoolWatcherConfig, PoolState
-from src.opportunity_engine import OpportunityEngine, OpportunityEngineConfig
-from src.ledger import Ledger, LedgerConfig
-from src.alerts import AlertManager, AlertConfig
+from src.pool_watcher import PoolWatcher, PoolState
+from src.opportunity_engine import OpportunityEngine
+from src.ledger import Ledger
+from src.alerts import AlertManager
 
 # Setup logging
 logging.basicConfig(
@@ -96,7 +96,10 @@ class ArbitrageBot:
         blockchain_config = self.config.get("blockchain", {})
         host = blockchain_config.get("algod_host", "localhost")
         port = blockchain_config.get("algod_port", 4001)
-        token = blockchain_config.get("algod_token", "") or "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        token = (
+            blockchain_config.get("algod_token", "")
+            or "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
 
         client = AlgodClient(token, f"http://{host}:{port}")
 
@@ -106,14 +109,20 @@ class ArbitrageBot:
         for attempt in range(max_retries):
             try:
                 status = client.status()
-                logger.info(f"Connected to Algorand node (block {status['last-round']})")
+                logger.info(
+                    f"Connected to Algorand node (block {status['last-round']})"
+                )
                 return client
             except Exception as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Attempt {attempt + 1}/{max_retries}: Failed to connect to Algorand - retrying in {retry_delay}s...")
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries}: Failed to connect to Algorand - retrying in {retry_delay}s..."
+                    )
                     time.sleep(retry_delay)
                 else:
-                    logger.error(f"Failed to connect to Algorand node after {max_retries} attempts: {e}")
+                    logger.error(
+                        f"Failed to connect to Algorand node after {max_retries} attempts: {e}"
+                    )
                     raise
 
     def _create_pool_watcher(self) -> PoolWatcher:
@@ -127,7 +136,9 @@ class ArbitrageBot:
         """Create opportunity engine from config."""
         engine_config = self.config.get("opportunity_engine", {})
         engine = OpportunityEngine(engine_config)
-        logger.info(f"Created OpportunityEngine (gate: {engine_config.get('spread_gate_bps', 55)}bps)")
+        logger.info(
+            f"Created OpportunityEngine (gate: {engine_config.get('spread_gate_bps', 55)}bps)"
+        )
         return engine
 
     def _create_ledger(self) -> Ledger:

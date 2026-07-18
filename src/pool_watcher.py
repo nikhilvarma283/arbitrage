@@ -7,7 +7,7 @@ Detects pool state changes (reserve updates) and emits events to opportunity_eng
 Sprint 2.1: Pool Watcher Implementation
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Callable, Any
 from decimal import Decimal
@@ -123,7 +123,9 @@ class PoolWatcher:
                     expected_next = self.last_block_processed + 1
                     if current_block > expected_next:
                         missed = current_block - expected_next
-                        logger.warning(f"Missed {missed} blocks (expected {expected_next}, got {current_block})")
+                        logger.warning(
+                            f"Missed {missed} blocks (expected {expected_next}, got {current_block})"
+                        )
                         self.stats["missed_blocks"] += missed
 
                 if current_block > self.last_block_processed:
@@ -167,7 +169,9 @@ class PoolWatcher:
             if appl_txns:
                 app_ids = [txn.get("apid") for txn in appl_txns]
                 if self.last_block_processed % 100 == 0:  # Log every 100 blocks
-                    logger.debug(f"Block {block_num}: Found {len(appl_txns)} app txns: {set(app_ids)}")
+                    logger.debug(
+                        f"Block {block_num}: Found {len(appl_txns)} app txns: {set(app_ids)}"
+                    )
 
             for txn in txns:
                 if txn.get("type") != "appl":  # Application call transactions
@@ -186,7 +190,9 @@ class PoolWatcher:
             logger.error(f"Error processing block {block_num}: {e}")
             self.stats["errors"] += 1
 
-    def _update_pool_state(self, pool_id: int, txn: Dict[str, Any], block_num: int) -> bool:
+    def _update_pool_state(
+        self, pool_id: int, txn: Dict[str, Any], block_num: int
+    ) -> bool:
         """
         Update cached pool state from block data.
 
@@ -217,11 +223,17 @@ class PoolWatcher:
                 for state_item in global_state:
                     key = state_item.get("key")
                     if key == "A":  # Asset A reserves
-                        reserve_a = Decimal(state_item.get("value", {}).get("uint", 1000000))
+                        reserve_a = Decimal(
+                            state_item.get("value", {}).get("uint", 1000000)
+                        )
                     elif key == "B":  # Asset B reserves
-                        reserve_b = Decimal(state_item.get("value", {}).get("uint", 500000))
+                        reserve_b = Decimal(
+                            state_item.get("value", {}).get("uint", 500000)
+                        )
             except Exception as e:
-                logger.warning(f"Could not query app state for pool {pool_id}: {e}, using fallback")
+                logger.warning(
+                    f"Could not query app state for pool {pool_id}: {e}, using fallback"
+                )
                 reserve_a = Decimal(1000000)
                 reserve_b = Decimal(500000)
 
@@ -300,7 +312,9 @@ class PoolWatcherConfig:
 
     def create_client(self) -> AlgodClient:
         """Create and return Algod client."""
-        return AlgodClient(self.algod_token, f"http://{self.algod_host}:{self.algod_port}")
+        return AlgodClient(
+            self.algod_token, f"http://{self.algod_host}:{self.algod_port}"
+        )
 
 
 if __name__ == "__main__":

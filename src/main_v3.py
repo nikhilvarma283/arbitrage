@@ -16,7 +16,7 @@ import sys
 import time
 import json
 from datetime import datetime, date
-from typing import Dict, List, Optional
+from typing import Any, Dict, List
 import yaml
 from pathlib import Path
 from flask import Flask, jsonify
@@ -28,18 +28,9 @@ from algosdk.v2client.algod import AlgodClient
 # Import new components
 from src.pool_watcher_v2 import PoolWatcherV2
 from src.cycle_detector import CycleDetector
-from src.simulator import CycleSimulator, StalenessAnalyzer
-from src.ledger import Ledger
-from src.pool_discovery import PoolDiscovery
+from src.simulator import CycleSimulator
+from src.ledger import Ledger, CycleRecord
 from src.coinbase_feed import fetch_coinbase_price
-from collections import namedtuple
-
-CycleRecord = namedtuple('CycleRecord', [
-    'ts_utc', 'block_round', 'route_id', 'cycle_path', 'hops',
-    'raw_spread_log', 'fee_stack_log', 'net_profit_est_usd',
-    'optimal_size_usdc', 'cleared_gate', 'simulate_pass',
-    'staleness_ms', 'would_execute', 'notes'
-])
 
 # Setup logging
 logging.basicConfig(
@@ -76,20 +67,22 @@ class ArbitrageBotV3:
 
         # Pool auto-discovery disabled - using hardcoded confirmed pool IDs from config
         # TODO: Re-enable when algod_client initialization is fixed to pass valid client
-        logger.info("Pool discovery: using confirmed pool IDs from config (dynamic discovery disabled)")
+        logger.info(
+            "Pool discovery: using confirmed pool IDs from config (dynamic discovery disabled)"
+        )
 
         confirmed_count = sum(
-            1 for dex_pools in self.pools_config.get("dexes", {}).values()
+            1
+            for dex_pools in self.pools_config.get("dexes", {}).values()
             for pool in dex_pools.values()
             if isinstance(pool, dict) and pool.get("app_id")
         )
         logger.info(f"✓ Loaded {confirmed_count} pools with app_ids")
 
-        self.watcher = PoolWatcherV2(self.algod_client, self.pools_config, self.config.get("blockchain", {}))
-        self.detector = CycleDetector(
-            self.pools_config,
-            self.config.get("gates", {})
+        self.watcher = PoolWatcherV2(
+            self.algod_client, self.pools_config, self.config.get("blockchain", {})
         )
+        self.detector = CycleDetector(self.pools_config, self.config.get("gates", {}))
         self.simulator = CycleSimulator(
             self.algod_client,
             # Zero-key address (encoding.encode_address(bytes(32))) -- shadow
@@ -98,7 +91,7 @@ class ArbitrageBotV3:
             # just needs to be a syntactically valid 58-char address. The
             # previous placeholder here was 57 characters (invalid).
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAY5HFKQ",
-            self.config.get("gates", {})
+            self.config.get("gates", {}),
         )
         self.ledger = Ledger(
             self.config.get("ledger", {}).get("database_path", "/data/ledger.db")
@@ -110,7 +103,7 @@ class ArbitrageBotV3:
         # rather than duplicating counters here that would need to be kept in
         # sync. staleness_total_ms/staleness_count back a running average of
         # simulate_cycle()'s staleness_ms across every cycle simulated this run.
-        self.stats = {
+        self.stats: Dict[str, Any] = {
             "start_time": datetime.now(),
             "cycles_detected": 0,
             "cycles_simulated": 0,
@@ -166,7 +159,10 @@ class ArbitrageBotV3:
         bc_config = self.config.get("blockchain", {})
         host = bc_config.get("algod_host", "localhost")
         port = bc_config.get("algod_port", 4001)
-        token = bc_config.get("algod_token", "") or "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        token = (
+            bc_config.get("algod_token", "")
+            or "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        )
         use_https = bc_config.get("use_https", False)
 
         protocol = "https" if use_https else "http"
@@ -175,14 +171,16 @@ class ArbitrageBotV3:
         # Verify connection with timeout
         max_retries = 20
         retry_delay = 2
-        url = f"http://{host}:{port}/health"
 
         for attempt in range(max_retries):
             try:
                 # Try SDK first
                 try:
                     status = client.status()
-                    logger.info(f"✓ Connected to Algorand (block {status['last-round']})")
+                    assert isinstance(status, dict)  # algod default response format
+                    logger.info(
+                        f"✓ Connected to Algorand (block {status['last-round']})"
+                    )
                     return client
                 except Exception:
                     pass
@@ -200,13 +198,27 @@ class ArbitrageBotV3:
                             return client
                     except Exception:
                         continue
+
+                # Neither the SDK call nor either HTTP fallback endpoint
+                # succeeded this attempt, but none of them raised either --
+                # retry rather than silently falling through with no client.
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_retries}: node not responding yet"
+                    )
+                    time.sleep(retry_delay)
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Attempt {attempt + 1}/{max_retries}: {e}")
                     time.sleep(retry_delay)
                 else:
-                    logger.warning(f"Timeout waiting for node, proceeding anyway")
+                    logger.warning("Timeout waiting for node, proceeding anyway")
                     return client  # Return anyway - watcher will retry
+
+        raise RuntimeError(
+            f"Could not connect to Algorand node at {protocol}://{host}:{port} "
+            f"after {max_retries} attempts"
+        )
 
     def _on_pools_updated(self, pool_states: List) -> None:
         """Callback when pools update (event-driven)."""
@@ -289,7 +301,8 @@ class ArbitrageBotV3:
             # Pact ALGO/USDT pool (~$0.001 total reserves) produced a
             # nonsensical 400%+ "spread" against Coinbase.
             pool_states = [
-                ps for ps in self.watcher.get_all_pool_states()
+                ps
+                for ps in self.watcher.get_all_pool_states()
                 if ps.reserve_a >= self.detector.min_pool_reserve_raw
                 and ps.reserve_b >= self.detector.min_pool_reserve_raw
             ]
@@ -310,12 +323,16 @@ class ArbitrageBotV3:
 
                 for stable_asset_id in stable_asset_ids:
                     for ps in pool_states:
-                        self._compare_cex_dex_pair(product_id, stable_asset_id, cex_price, ps)
+                        self._compare_cex_dex_pair(
+                            product_id, stable_asset_id, cex_price, ps
+                        )
 
         except Exception as e:
             logger.error(f"Error checking CEX-DEX opportunities: {e}")
 
-    def _compare_cex_dex_pair(self, product_id: str, stable_asset_id: int, cex_price, ps) -> None:
+    def _compare_cex_dex_pair(
+        self, product_id: str, stable_asset_id: int, cex_price, ps
+    ) -> None:
         """Compare one Coinbase price against one DEX pool state and log the result."""
         # Only ALGO/<stablecoin> pools are comparable to an ALGO-USD CEX
         # price; identify ALGO regardless of which side of the pool it's on.
@@ -396,75 +413,87 @@ class ArbitrageBotV3:
             staleness_count = self.stats.get("staleness_count", 0)
             avg_staleness_ms = (
                 self.stats.get("staleness_total_ms", 0) / staleness_count
-                if staleness_count else 0
+                if staleness_count
+                else 0
             )
 
-            return jsonify({
-                "mode": self.mode,
-                "uptime_seconds": uptime,
-                "status": "running" if self.running else "stopped",
-                "blocks_processed": watcher_stats.get("blocks_processed", 0),
-                "pools_updated": watcher_stats.get("pools_updated", 0),
-                "missed_blocks": watcher_stats.get("missed_blocks", 0),
-                "cycles_detected": self.stats["cycles_detected"],
-                "cycles_simulated": self.stats["cycles_simulated"],
-                "would_execute_count": self.stats["would_execute_count"],
-                "avg_staleness_ms": int(avg_staleness_ms),
-                "cex_checks": self.stats["cex_checks"],
-                "cex_opportunities_detected": self.stats["cex_opportunities_detected"],
-            })
+            return jsonify(
+                {
+                    "mode": self.mode,
+                    "uptime_seconds": uptime,
+                    "status": "running" if self.running else "stopped",
+                    "blocks_processed": watcher_stats.get("blocks_processed", 0),
+                    "pools_updated": watcher_stats.get("pools_updated", 0),
+                    "missed_blocks": watcher_stats.get("missed_blocks", 0),
+                    "cycles_detected": self.stats["cycles_detected"],
+                    "cycles_simulated": self.stats["cycles_simulated"],
+                    "would_execute_count": self.stats["would_execute_count"],
+                    "avg_staleness_ms": int(avg_staleness_ms),
+                    "cex_checks": self.stats["cex_checks"],
+                    "cex_opportunities_detected": self.stats[
+                        "cex_opportunities_detected"
+                    ],
+                }
+            )
 
         @self.app.route("/opportunities", methods=["GET"])
         def opportunities():
             """Get recent opportunities."""
-            limit = 10
-            # Would query ledger for recent cycles
-            return jsonify({
-                "total_detected": self.stats["cycles_detected"],
-                "would_execute": self.stats["would_execute_count"],
-                "recent": [],  # Would populate from ledger
-            })
+            # TODO: query ledger for recent cycles (limit=10)
+            return jsonify(
+                {
+                    "total_detected": self.stats["cycles_detected"],
+                    "would_execute": self.stats["would_execute_count"],
+                    "recent": [],  # Would populate from ledger
+                }
+            )
 
         @self.app.route("/pools", methods=["GET"])
         def pools():
             """Get current pool states."""
             states = self.watcher.get_all_pool_states()
-            return jsonify({
-                "total_pools": len(states),
-                "pools": [
-                    {
-                        "app_id": s.pool_id,
-                        "dex": s.dex,
-                        "pair": f"{s.asset_a}/{s.asset_b}",
-                        "reserve_a": float(s.reserve_a),
-                        "reserve_b": float(s.reserve_b),
-                        "log_rate": s.log_rate,
-                    }
-                    for s in states
-                ],
-            })
+            return jsonify(
+                {
+                    "total_pools": len(states),
+                    "pools": [
+                        {
+                            "app_id": s.pool_id,
+                            "dex": s.dex,
+                            "pair": f"{s.asset_a}/{s.asset_b}",
+                            "reserve_a": float(s.reserve_a),
+                            "reserve_b": float(s.reserve_b),
+                            "log_rate": s.log_rate,
+                        }
+                        for s in states
+                    ],
+                }
+            )
 
         @self.app.route("/funnel", methods=["GET"])
         def funnel():
             """Get Gate 0 funnel report."""
             # Would generate from ledger query
-            return jsonify({
-                "message": "Gate 0 funnel report (14-30 days)",
-                "pass_criteria": {
-                    "would_execute_per_day": ">=10",
-                    "median_profit_usd": ">=0.75",
-                    "staleness_win_rate": ">=40%",
+            return jsonify(
+                {
+                    "message": "Gate 0 funnel report (14-30 days)",
+                    "pass_criteria": {
+                        "would_execute_per_day": ">=10",
+                        "median_profit_usd": ">=0.75",
+                        "staleness_win_rate": ">=40%",
+                    },
                 }
-            })
+            )
 
         @self.app.route("/staleness", methods=["GET"])
         def staleness():
             """Get staleness distribution (win-rate forecast)."""
             # Would analyze from simulation results
-            return jsonify({
-                "message": "Staleness decay curve analysis",
-                "estimated_win_rate": "calculating...",
-            })
+            return jsonify(
+                {
+                    "message": "Staleness decay curve analysis",
+                    "estimated_win_rate": "calculating...",
+                }
+            )
 
     def run(self) -> None:
         """Start bot and query API."""
@@ -509,10 +538,7 @@ class ArbitrageBotV3:
         # Generate final Gate 0 report if running in shadow mode
         if self.mode == "shadow":
             try:
-                report = self.ledger.get_funnel_report(
-                    date.today(),
-                    date.today()
-                )
+                report = self.ledger.get_funnel_report(date.today(), date.today())
                 logger.info(f"Gate 0 Report: {report}")
             except Exception as e:
                 logger.error(f"Failed to generate report: {e}")

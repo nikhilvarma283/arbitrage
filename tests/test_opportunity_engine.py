@@ -7,7 +7,11 @@ Sprint 2.2: Opportunity Engine Testing
 import pytest
 from decimal import Decimal
 from datetime import datetime
-from src.opportunity_engine import OpportunityEngine, Opportunity, OpportunityEngineConfig
+from src.opportunity_engine import (
+    OpportunityEngine,
+    Opportunity,
+    OpportunityEngineConfig,
+)
 from src.pool_watcher import PoolState
 
 

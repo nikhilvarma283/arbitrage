@@ -10,10 +10,9 @@ Sprint 2.2: Opportunity Engine Implementation
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from decimal import Decimal
 import logging
-import math
 
 from src.pool_watcher import PoolState
 
@@ -32,7 +31,9 @@ class Opportunity:
     expected_profit_usd: Decimal  # Profit in USD equivalent
     rank: int  # Rank by profit (lower = better)
     discovered_at: datetime = field(default_factory=datetime.now)
-    expires_at: datetime = field(default_factory=lambda: datetime.now() + timedelta(seconds=6))
+    expires_at: datetime = field(
+        default_factory=lambda: datetime.now() + timedelta(seconds=6)
+    )
 
     def __repr__(self) -> str:
         return (
@@ -91,7 +92,9 @@ class OpportunityEngine:
             "avg_spread_bps": 0.0,
         }
 
-    def detect_opportunities(self, pool_states: Dict[int, PoolState]) -> List[Opportunity]:
+    def detect_opportunities(
+        self, pool_states: Dict[int, PoolState]
+    ) -> List[Opportunity]:
         """
         Detect all profitable opportunities given current pool states.
 
@@ -255,13 +258,17 @@ class OpportunityEngine:
         """
         # Gate 1: Spread
         if opp.spread_bps < self.config.get("spread_gate_bps", 55):
-            logger.debug(f"Discarded: spread {opp.spread_bps:.1f}bps < {self.config['spread_gate_bps']}bps")
+            logger.debug(
+                f"Discarded: spread {opp.spread_bps:.1f}bps < {self.config['spread_gate_bps']}bps"
+            )
             return False
 
         # Gate 2: Minimum profit
         min_profit = Decimal(str(self.config.get("min_profit_usd", 1.0)))
         if opp.expected_profit_usd < min_profit:
-            logger.debug(f"Discarded: profit ${opp.expected_profit_usd:.2f} < ${min_profit:.2f}")
+            logger.debug(
+                f"Discarded: profit ${opp.expected_profit_usd:.2f} < ${min_profit:.2f}"
+            )
             return False
 
         # Gate 3: Position size
@@ -311,10 +318,16 @@ class OpportunityEngineConfig:
 
     def __init__(self, **kwargs):
         """Initialize config with optional overrides."""
-        self.spread_gate_bps = kwargs.get("spread_gate_bps", self.DEFAULT_SPREAD_GATE_BPS)
+        self.spread_gate_bps = kwargs.get(
+            "spread_gate_bps", self.DEFAULT_SPREAD_GATE_BPS
+        )
         self.min_profit_usd = kwargs.get("min_profit_usd", self.DEFAULT_MIN_PROFIT_USD)
-        self.min_position_size = kwargs.get("min_position_size", self.DEFAULT_MIN_POSITION_SIZE)
-        self.max_position_size = kwargs.get("max_position_size", self.DEFAULT_MAX_POSITION_SIZE)
+        self.min_position_size = kwargs.get(
+            "min_position_size", self.DEFAULT_MIN_POSITION_SIZE
+        )
+        self.max_position_size = kwargs.get(
+            "max_position_size", self.DEFAULT_MAX_POSITION_SIZE
+        )
         self.profit_margin = kwargs.get("profit_margin", self.DEFAULT_PROFIT_MARGIN)
         self.pool_pairs = kwargs.get("pool_pairs", [])
 

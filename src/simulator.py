@@ -13,14 +13,14 @@ it's our empirical estimate of the race win rate.
 
 import logging
 import time
-import math
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, Optional, List, Tuple
-from decimal import Decimal
+from typing import Dict, Optional, List
 from algosdk.v2client.algod import AlgodClient
-from algosdk.v2client.models.simulate_request import SimulateRequest, SimulateRequestTransactionGroup
-from algosdk import transaction, encoding
+from algosdk.v2client.models.simulate_request import (
+    SimulateRequest,
+    SimulateRequestTransactionGroup,
+)
+from algosdk import transaction
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SimulationResult:
     """Result of simulating a cycle."""
+
     route_id: str
     cycle_path: str
     hops: int
@@ -105,7 +106,7 @@ class CycleSimulator:
             # Call algod.simulate() -- unsigned txns wrapped with empty
             # signatures, since we're not signing/broadcasting for real.
             try:
-                signed_stub = [
+                signed_stub: List[transaction.GenericSignedTransaction] = [
                     transaction.SignedTransaction(transaction=t, signature=None)
                     for t in txn_group
                 ]
@@ -114,15 +115,19 @@ class CycleSimulator:
                     allow_empty_signatures=True,
                 )
                 result = self.client.simulate_transactions(request)
-                simulate_pass = result.get("txn-groups", [{}])[0].get("txn-results", [{}])[-1].get("success", False)
+                assert isinstance(result, dict)  # algod default response format
+                simulate_pass = (
+                    result.get("txn-groups", [{}])[0]
+                    .get("txn-results", [{}])[-1]
+                    .get("success", False)
+                )
             except Exception as e:
                 logger.warning(f"Simulate failed: {e}")
                 simulate_pass = False
 
             # Determine would_execute
-            would_execute = (
-                simulate_pass and
-                cycle.net_profit_usd >= self.gates.get("min_profit_usd", 0.75)
+            would_execute = simulate_pass and cycle.net_profit_usd >= self.gates.get(
+                "min_profit_usd", 0.75
             )
 
             return SimulationResult(
@@ -305,17 +310,20 @@ class StalenessAnalyzer:
 
         avg_profit = (
             sum(r.net_profit_est_usd for r in execute_results) / len(execute_results)
-            if execute_results else 0
+            if execute_results
+            else 0
         )
 
         avg_staleness = (
             sum(r.staleness_ms for r in execute_results) / len(execute_results)
-            if execute_results else 0
+            if execute_results
+            else 0
         )
 
         estimated_win_rate = (
             StalenessAnalyzer.calculate_win_rate_from_staleness(int(avg_staleness))
-            if execute_results else 0
+            if execute_results
+            else 0
         )
 
         return {

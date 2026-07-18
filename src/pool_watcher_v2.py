@@ -27,7 +27,7 @@ import time
 import requests
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional, Callable
+from typing import Any, Dict, List, Optional, Callable
 from decimal import Decimal
 from algosdk.v2client.algod import AlgodClient
 
@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PoolState:
     """Current state of a liquidity pool."""
+
     pool_id: int
     dex: str
     asset_a: int
@@ -65,7 +66,7 @@ class PoolState:
         )
 
 
-def _decode_state(entries: List[Dict]) -> Dict[str, object]:
+def _decode_state(entries: List[Dict]) -> Dict[str, Any]:
     """Decode an algod global-state/local-state key-value list into {plain_key: value}."""
     decoded = {}
     for item in entries:
@@ -94,7 +95,12 @@ class PoolWatcherV2:
         watcher.start()  # Blocking event loop
     """
 
-    def __init__(self, algod_client: AlgodClient, pools_config: Dict, algod_config: Dict = None):
+    def __init__(
+        self,
+        algod_client: AlgodClient,
+        pools_config: Dict,
+        algod_config: Optional[Dict] = None,
+    ):
         """
         Initialize event-driven watcher.
 
@@ -168,7 +174,9 @@ class PoolWatcherV2:
                 initialized_count += 1
                 logger.debug(f"Initialized pool {pool_id} ({pool_info.get('dex')})")
             except Exception as e:
-                logger.warning(f"Could not initialize pool {pool_id} ({pool_info.get('dex')}): {e}")
+                logger.warning(
+                    f"Could not initialize pool {pool_id} ({pool_info.get('dex')}): {e}"
+                )
 
         logger.info(f"✓ Initialized {initialized_count} pools")
 
@@ -183,6 +191,7 @@ class PoolWatcherV2:
             # Get starting block (with fallback to HTTP if SDK fails)
             try:
                 status = self.client.status()
+                assert isinstance(status, dict)  # algod default response format
                 self.last_block = status["last-round"]
             except Exception as e:
                 logger.warning(f"SDK status call failed: {e}, using HTTP fallback")
@@ -199,6 +208,7 @@ class PoolWatcherV2:
                     # Check for new blocks (with fallback)
                     try:
                         status = self.client.status()
+                        assert isinstance(status, dict)  # algod default response format
                         current_block = status["last-round"]
                     except Exception:
                         current_block = self._get_block_via_http()
@@ -220,9 +230,13 @@ class PoolWatcherV2:
                                 self.stats["cycles_rechecked"] += 1
                                 # Trigger callback for cycle detection
                                 if self.on_pools_changed:
-                                    self.on_pools_changed(list(self.pool_states.values()))
+                                    self.on_pools_changed(
+                                        list(self.pool_states.values())
+                                    )
                         except Exception as e:
-                            logger.debug(f"Could not process block {current_block}: {e}")
+                            logger.debug(
+                                f"Could not process block {current_block}: {e}"
+                            )
 
                         self.last_block = current_block
                         self.stats["blocks_processed"] += 1
@@ -245,6 +259,7 @@ class PoolWatcherV2:
         """
         try:
             block = self.client.block_info(block_num)
+            assert isinstance(block, dict)  # algod default response format
             block_data = block.get("block", {})
 
             # Get transactions (handle both formats)
@@ -261,7 +276,10 @@ class PoolWatcherV2:
             for txn in txns:
                 if not isinstance(txn, dict):
                     continue
-                if txn.get("type") == "appl" and txn.get("apid") in self.trigger_app_ids:
+                if (
+                    txn.get("type") == "appl"
+                    and txn.get("apid") in self.trigger_app_ids
+                ):
                     triggered = True
                     break
 
@@ -294,10 +312,14 @@ class PoolWatcherV2:
 
         Returns: True if state changed, False otherwise
         """
-        pool_id = pool_info.get("app_id")
+        # _flatten_pools() already filters out any pool_info missing app_id,
+        # and every configured pool entry is required to carry asset_a/
+        # asset_b -- indexing directly (rather than .get()) both documents
+        # that invariant and narrows the type from Optional[Any] to int.
+        pool_id = int(pool_info["app_id"])
         protocol = pool_info.get("protocol", "pact")
-        configured_asset_a = pool_info.get("asset_a")
-        configured_asset_b = pool_info.get("asset_b")
+        configured_asset_a = int(pool_info["asset_a"])
+        configured_asset_b = int(pool_info["asset_b"])
 
         try:
             if protocol == "tinyman_v2":
@@ -305,6 +327,7 @@ class PoolWatcherV2:
                 validator_app = pool_info["validator_app"]
 
                 account_info = self.client.account_info(address)
+                assert isinstance(account_info, dict)  # algod default response format
                 kv = {}
                 for app_ls in account_info.get("apps-local-state", []):
                     if app_ls.get("id") == validator_app:
@@ -312,7 +335,9 @@ class PoolWatcherV2:
                         break
 
                 if not kv:
-                    raise ValueError(f"No local state found for validator app {validator_app} on {address}")
+                    raise ValueError(
+                        f"No local state found for validator app {validator_app} on {address}"
+                    )
 
                 asset_1_id = kv.get("asset_1_id", 0)
                 asset_1_reserves = Decimal(kv.get("asset_1_reserves", 0))
@@ -326,6 +351,7 @@ class PoolWatcherV2:
 
             else:
                 app_info = self.client.application_info(pool_id)
+                assert isinstance(app_info, dict)  # algod default response format
                 global_state = app_info.get("params", {}).get("global-state", [])
                 kv = _decode_state(global_state)
 
@@ -370,7 +396,9 @@ class PoolWatcherV2:
             return True
 
         except Exception as e:
-            logger.warning(f"Could not update pool {pool_id} ({pool_info.get('dex')}): {e}")
+            logger.warning(
+                f"Could not update pool {pool_id} ({pool_info.get('dex')}): {e}"
+            )
             return False
 
     def get_all_pool_states(self) -> List[PoolState]:
@@ -393,7 +421,9 @@ class PoolWatcherV2:
             for endpoint_path in ["/v2/status", "/status"]:
                 try:
                     endpoint = f"{protocol}://{host}:{port}{endpoint_path}"
-                    resp = requests.get(endpoint, timeout=5, verify=False)  # SSL verify=False for self-signed certs
+                    resp = requests.get(
+                        endpoint, timeout=5, verify=False
+                    )  # SSL verify=False for self-signed certs
                     if resp.status_code == 200:
                         data = resp.json()
                         if "last-round" in data:

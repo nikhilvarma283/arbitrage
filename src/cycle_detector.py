@@ -17,8 +17,7 @@ Filters by:
 import logging
 import math
 from dataclasses import dataclass
-from decimal import Decimal
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Tuple
 from itertools import combinations, permutations
 
 logger = logging.getLogger(__name__)
@@ -27,6 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Cycle:
     """Arbitrage cycle (direct or triangular)."""
+
     hops: int  # 2 or 3
     pools: List[int]  # List of pool app_ids
     path: List[Tuple[int, int]]  # List of (asset_a, asset_b) pairs
@@ -84,8 +84,10 @@ class CycleDetector:
         self.min_pool_reserve_raw = gates.get("min_pool_reserve_raw", 100_000_000)
 
         # Build pool lookup
-        self.pools_by_id = {}  # app_id -> pool_info
-        self.pools_by_assets = {}  # (asset_a, asset_b) -> [pool_info, ...]
+        self.pools_by_id: Dict[int, Dict] = {}  # app_id -> pool_info
+        self.pools_by_assets: Dict[
+            Tuple[int, int], List
+        ] = {}  # (asset_a, asset_b) -> [pool_info, ...]
         self._build_pool_indices()
 
         logger.info(f"CycleDetector initialized with {len(self.pools_by_id)} pools")
@@ -98,8 +100,8 @@ class CycleDetector:
                     continue
 
                 app_id = pool_info["app_id"]
-                asset_a = pool_info.get("asset_a")
-                asset_b = pool_info.get("asset_b")
+                asset_a = int(pool_info["asset_a"])
+                asset_b = int(pool_info["asset_b"])
 
                 # Add to pool lookup
                 self.pools_by_id[app_id] = pool_info
@@ -110,11 +112,15 @@ class CycleDetector:
 
                 if key_ab not in self.pools_by_assets:
                     self.pools_by_assets[key_ab] = []
-                self.pools_by_assets[key_ab].append((app_id, dex, False))  # False = not reversed
+                self.pools_by_assets[key_ab].append(
+                    (app_id, dex, False)
+                )  # False = not reversed
 
                 if key_ba not in self.pools_by_assets:
                     self.pools_by_assets[key_ba] = []
-                self.pools_by_assets[key_ba].append((app_id, dex, True))  # True = reversed
+                self.pools_by_assets[key_ba].append(
+                    (app_id, dex, True)
+                )  # True = reversed
 
     def detect_cycles(self, pool_states: List) -> List[Cycle]:
         """
@@ -129,12 +135,16 @@ class CycleDetector:
         cycles = []
 
         liquid_states = [
-            ps for ps in pool_states
-            if ps.reserve_a >= self.min_pool_reserve_raw and ps.reserve_b >= self.min_pool_reserve_raw
+            ps
+            for ps in pool_states
+            if ps.reserve_a >= self.min_pool_reserve_raw
+            and ps.reserve_b >= self.min_pool_reserve_raw
         ]
         dust_excluded = len(pool_states) - len(liquid_states)
         if dust_excluded:
-            logger.info(f"Excluded {dust_excluded} dust pool(s) below min_pool_reserve_raw={self.min_pool_reserve_raw}")
+            logger.info(
+                f"Excluded {dust_excluded} dust pool(s) below min_pool_reserve_raw={self.min_pool_reserve_raw}"
+            )
 
         # Detect direct pairs (2-hop)
         direct_cycles = self._detect_direct_pairs(liquid_states)
@@ -144,7 +154,9 @@ class CycleDetector:
         triangular_cycles = self._detect_triangular(liquid_states)
         cycles.extend(triangular_cycles)
 
-        logger.info(f"Detected {len(cycles)} cycles (direct: {len(direct_cycles)}, triangular: {len(triangular_cycles)})")
+        logger.info(
+            f"Detected {len(cycles)} cycles (direct: {len(direct_cycles)}, triangular: {len(triangular_cycles)})"
+        )
 
         return cycles
 
@@ -153,7 +165,7 @@ class CycleDetector:
         cycles = []
 
         # Group pools by asset pair
-        pairs_dict = {}
+        pairs_dict: Dict[Tuple[int, int], List] = {}
         for pool_state in pool_states:
             key = (pool_state.asset_a, pool_state.asset_b)
             if key not in pairs_dict:
@@ -199,7 +211,9 @@ class CycleDetector:
                         continue
 
                     # Estimate profit (simplified - would use golden section in real code)
-                    net_profit_usd = self._estimate_profit_usd(net_spread_log, 500)  # Base size 500 USDC
+                    net_profit_usd = self._estimate_profit_usd(
+                        net_spread_log, 500
+                    )  # Base size 500 USDC
 
                     if net_profit_usd < self.min_profit_usd:
                         continue
@@ -256,9 +270,15 @@ class CycleDetector:
                             pool3_id, dex3, rev3 = pool3_info
 
                             # Find actual pool states
-                            ps1 = next((p for p in pool_states if p.pool_id == pool1_id), None)
-                            ps2 = next((p for p in pool_states if p.pool_id == pool2_id), None)
-                            ps3 = next((p for p in pool_states if p.pool_id == pool3_id), None)
+                            ps1 = next(
+                                (p for p in pool_states if p.pool_id == pool1_id), None
+                            )
+                            ps2 = next(
+                                (p for p in pool_states if p.pool_id == pool2_id), None
+                            )
+                            ps3 = next(
+                                (p for p in pool_states if p.pool_id == pool3_id), None
+                            )
 
                             if not (ps1 and ps2 and ps3):
                                 continue
@@ -288,16 +308,18 @@ class CycleDetector:
                             # specific route (Tinyman-heavy routes cost more
                             # than a route touching Pact's lower-fee pool).
                             fee_log = (
-                                math.log(1 - ps1.fee_bps / 10000) +
-                                math.log(1 - ps2.fee_bps / 10000) +
-                                math.log(1 - ps3.fee_bps / 10000)
+                                math.log(1 - ps1.fee_bps / 10000)
+                                + math.log(1 - ps2.fee_bps / 10000)
+                                + math.log(1 - ps3.fee_bps / 10000)
                             )
                             fee_cost_log = -fee_log  # positive magnitude of real cost
 
                             net_log = cycle_log + fee_log  # Log domain: multiply is add
 
                             # Check gates
-                            if abs(cycle_log) < math.log(1 + self.spread_gate_bps / 10000):
+                            if abs(cycle_log) < math.log(
+                                1 + self.spread_gate_bps / 10000
+                            ):
                                 continue
 
                             # Dynamic breakeven: net gain must clear the real

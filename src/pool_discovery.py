@@ -113,33 +113,41 @@ class PoolDiscovery:
         """Discover pools across all DEXes by querying blockchain."""
         pools = {}
 
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("POOL DISCOVERY - Querying blockchain directly")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         # Tinyman V2
         logger.info("\n1. Discovering Tinyman V2 pools...")
         tinyman_pools = self._discover_tinyman(pairs)
         pools["tinyman_v2"] = tinyman_pools
-        logger.info(f"   Found {len([p for p in tinyman_pools.values() if p.get('app_id')])} Tinyman pools")
+        logger.info(
+            f"   Found {len([p for p in tinyman_pools.values() if p.get('app_id')])} Tinyman pools"
+        )
 
         # Humble Swap
         logger.info("\n2. Discovering Humble Swap pools...")
         humble_pools = self._discover_humble_swap(pairs)
         pools["humble_swap"] = humble_pools
-        logger.info(f"   Found {len([p for p in humble_pools.values() if p.get('app_id')])} Humble Swap pools")
+        logger.info(
+            f"   Found {len([p for p in humble_pools.values() if p.get('app_id')])} Humble Swap pools"
+        )
 
         # Pact
         logger.info("\n3. Discovering Pact pools...")
         pact_pools = self._discover_pact(pairs)
         pools["pact"] = pact_pools
-        logger.info(f"   Found {len([p for p in pact_pools.values() if p.get('app_id')])} Pact pools")
+        logger.info(
+            f"   Found {len([p for p in pact_pools.values() if p.get('app_id')])} Pact pools"
+        )
 
         # Vestige
         logger.info("\n4. Discovering Vestige pools...")
         vestige_pools = self._discover_vestige(pairs)
         pools["vestige"] = vestige_pools
-        logger.info(f"   Found {len([p for p in vestige_pools.values() if p.get('app_id')])} Vestige pools")
+        logger.info(
+            f"   Found {len([p for p in vestige_pools.values() if p.get('app_id')])} Vestige pools"
+        )
 
         # Save to lockfile
         for dex, dex_pools in pools.items():
@@ -148,9 +156,9 @@ class PoolDiscovery:
 
         self.lockfile.save()
 
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info(f"Total pools discovered: {sum(len(p) for p in pools.values())}")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         return pools
 
@@ -159,7 +167,9 @@ class PoolDiscovery:
         pools = {}
 
         try:
-            logger.info(f"   Querying Tinyman V2 Validator App {TINYMAN_V2_VALIDATOR}...")
+            logger.info(
+                f"   Querying Tinyman V2 Validator App {TINYMAN_V2_VALIDATOR}..."
+            )
 
             # Get validator app state
             app_info = self.client.application_info(TINYMAN_V2_VALIDATOR)
@@ -200,7 +210,9 @@ class PoolDiscovery:
                 }
 
                 # Log for manual verification
-                logger.info(f"   {asset_a}/{asset_b}: Validator app queried (manual pool ID needed)")
+                logger.info(
+                    f"   {asset_a}/{asset_b}: Validator app queried (manual pool ID needed)"
+                )
 
         except Exception as e:
             logger.error(f"   Failed to discover Tinyman pools: {e}")
@@ -212,7 +224,9 @@ class PoolDiscovery:
         pools = {}
 
         try:
-            logger.info(f"   Querying Humble Swap Protocol App {HUMBLE_SWAP_PROTOCOL}...")
+            logger.info(
+                f"   Querying Humble Swap Protocol App {HUMBLE_SWAP_PROTOCOL}..."
+            )
 
             # Get protocol app state
             app_info = self.client.application_info(HUMBLE_SWAP_PROTOCOL)
@@ -245,7 +259,9 @@ class PoolDiscovery:
                     "fee_bps": 30,
                 }
 
-                logger.info(f"   {asset_a}/{asset_b}: Protocol app queried (manual pool ID needed)")
+                logger.info(
+                    f"   {asset_a}/{asset_b}: Protocol app queried (manual pool ID needed)"
+                )
 
         except Exception as e:
             logger.error(f"   Failed to discover Humble Swap pools: {e}")
@@ -257,7 +273,7 @@ class PoolDiscovery:
         pools = {}
 
         try:
-            logger.info(f"   Scanning blockchain for Pact pool creations...")
+            logger.info("   Scanning blockchain for Pact pool creations...")
 
             # Would scan recent blocks for Pact pool factory calls
             # Look for app creation transactions or state changes
@@ -286,7 +302,7 @@ class PoolDiscovery:
         pools = {}
 
         try:
-            logger.info(f"   Scanning blockchain for Vestige pool creations...")
+            logger.info("   Scanning blockchain for Vestige pool creations...")
 
             for asset_a, asset_b in pairs:
                 pair_key = (asset_a, asset_b)
@@ -311,9 +327,11 @@ class PoolDiscovery:
         """Verify asset IDs via algod."""
         logger.info("Verifying asset IDs...")
 
-        for name, asset_id in [("USDC", ASSETS["USDC"]),
-                                ("goBTC", ASSETS["goBTC"]),
-                                ("goETH", ASSETS["goETH"])]:
+        for name, asset_id in [
+            ("USDC", ASSETS["USDC"]),
+            ("goBTC", ASSETS["goBTC"]),
+            ("goETH", ASSETS["goETH"]),
+        ]:
             try:
                 asset_info = self.client.asset_info(asset_id)
                 decimals = asset_info["params"]["decimals"]

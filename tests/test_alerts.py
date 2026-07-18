@@ -5,7 +5,6 @@ Sprint 2.4 / 4.1: Alerts Testing
 """
 
 import pytest
-from datetime import datetime
 from src.alerts import AlertManager, AlertConfig
 
 
@@ -45,8 +44,7 @@ class TestAlertManagerFills:
         """Test send_fill when alerts disabled."""
         manager = AlertManager("", "")
         result = manager.send_fill("POOL_A", "POOL_B", 10.0, 0.5)
-        # TODO: Verify no exception raised, returns False
-        pass
+        assert result is False
 
 
 class TestAlertManagerBreakers:

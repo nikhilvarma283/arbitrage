@@ -37,6 +37,11 @@ requests==2.31.0
 Flask==3.0.0
 Werkzeug==3.0.1
 
-# Optional: Development
-ipython==8.18.1
-jupyter==1.0.0
+# Optional dev tooling (notebooks/REPL) is intentionally NOT installed here.
+# jupyter pulls in jupyterlab, whose pip dependency resolution backtracks
+# through dozens of versions and takes 60-80+ seconds even when it succeeds
+# (confirmed both in local Docker builds and suspected as the cause of the
+# GitHub Actions "Install dependencies" failure on the test(3.11) job) --
+# nothing in src/ or tests/ imports ipython/jupyter, so it has no business
+# being a required install for running the bot or its test suite. If you
+# want notebooks locally, `pip install ipython jupyter` yourself.
