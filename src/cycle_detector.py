@@ -7,7 +7,10 @@ Detects arbitrage opportunities:
 
 Filters by:
 - Spread gate (55bps default)
-- Fee breakeven (0.9% for 3-hop, 0.6% for 2-hop)
+- Fee breakeven: computed dynamically per-cycle from the real, live fee_bps
+  of whichever pools are actually involved, plus a required margin beyond
+  breakeven (breakeven_margin, default 5% of the real fee cost) -- not a
+  static two_hop/three_hop bps assumption
 - Min profit ($0.75 per CHANGE 7)
 """
 
@@ -45,17 +48,24 @@ class CycleDetector:
 
         Args:
             pools_config: pools.lock.json loaded config
-            gates: Gate thresholds (spread_gate_bps, fee_breakeven_bps, min_profit_usd)
+            gates: Gate thresholds (spread_gate_bps, breakeven_margin, min_profit_usd)
         """
         self.pools_config = pools_config
         self.gates = gates
 
         # Extract gate parameters
         self.spread_gate_bps = gates.get("spread_gate_bps", 55)
-        self.fee_breakevens = gates.get("fee_breakeven_bps", {
-            "two_hop": 60,
-            "three_hop": 90
-        })
+
+        # Breakeven is computed dynamically per-cycle from the real, live
+        # fee_bps of whichever specific pools are involved (Tinyman pools
+        # currently charge 36bps, not the 30bps a route might assume; a
+        # 3-hop route mixing DEXes has a different total cost than an
+        # all-Tinyman one) rather than a static two_hop/three_hop bps
+        # constant. breakeven_margin is the required cushion *beyond*
+        # breakeven, as a fraction of the real fee cost -- e.g. 0.05 means
+        # net gain must be at least 5% of what was actually paid in fees,
+        # equivalently gross gain must be at least 1.05x the fee cost.
+        self.breakeven_margin = gates.get("breakeven_margin", 0.05)
         self.min_profit_usd = gates.get("min_profit_usd", 0.75)
 
         # Pools with thin reserves (an abandoned pool, or one that just
@@ -161,23 +171,31 @@ class CycleDetector:
                     pool_a = pools[i]
                     pool_b = pools[j]
 
-                    # Calculate spread
+                    # Calculate spread. Signed spread_log tells us which
+                    # direction is profitable; the achievable gross gain
+                    # from trading in that direction is its magnitude.
                     spread_log = pool_a.log_rate - pool_b.log_rate
-                    spread_bps = spread_log * 10000  # Convert to basis points
+                    gross_gain_log = abs(spread_log)
+                    spread_bps = gross_gain_log * 10000  # Convert to basis points
 
                     # Check gates
-                    if abs(spread_bps) < self.spread_gate_bps:
+                    if spread_bps < self.spread_gate_bps:
                         continue
 
-                    # Fee is paid once per direction
+                    # Real, per-pool fee cost for this specific route (not a
+                    # static assumption) -- both fee_a_log/fee_b_log are
+                    # negative (ln of something < 1).
                     fee_a_log = math.log(1 - pool_a.fee_bps / 10000)
                     fee_b_log = math.log(1 - pool_b.fee_bps / 10000)
                     total_fee_log = fee_a_log + fee_b_log  # Pay fee on both swaps
+                    fee_cost_log = -total_fee_log  # positive magnitude of real cost
 
-                    net_spread_log = spread_log - total_fee_log
+                    # Fees reduce net gain -> add the (negative) fee log.
+                    net_spread_log = gross_gain_log + total_fee_log
 
-                    # Check breakeven
-                    if net_spread_log < math.log(1 + self.fee_breakevens["two_hop"] / 10000):
+                    # Dynamic breakeven: net gain must clear the real fee
+                    # cost by at least breakeven_margin (e.g. 5% of cost).
+                    if net_spread_log < fee_cost_log * self.breakeven_margin:
                         continue
 
                     # Estimate profit (simplified - would use golden section in real code)
@@ -192,7 +210,7 @@ class CycleDetector:
                         pools=[pool_a.pool_id, pool_b.pool_id],
                         path=[(pair[0], pair[1]), (pair[1], pair[0])],
                         dexes=[pool_a.dex, pool_b.dex],
-                        raw_spread_log=spread_log,
+                        raw_spread_log=gross_gain_log,
                         fee_stack_log=total_fee_log,
                         net_profit_log=net_spread_log,
                         optimal_size_usdc=500,  # Would calculate with golden section
@@ -266,12 +284,15 @@ class CycleDetector:
                             # Calculate cycle gain
                             cycle_log = hop1_log + hop2_log + hop3_log
 
-                            # Fee stack
+                            # Fee stack: real, per-pool fee cost for this
+                            # specific route (Tinyman-heavy routes cost more
+                            # than a route touching Pact's lower-fee pool).
                             fee_log = (
                                 math.log(1 - ps1.fee_bps / 10000) +
                                 math.log(1 - ps2.fee_bps / 10000) +
                                 math.log(1 - ps3.fee_bps / 10000)
                             )
+                            fee_cost_log = -fee_log  # positive magnitude of real cost
 
                             net_log = cycle_log + fee_log  # Log domain: multiply is add
 
@@ -279,7 +300,14 @@ class CycleDetector:
                             if abs(cycle_log) < math.log(1 + self.spread_gate_bps / 10000):
                                 continue
 
-                            if net_log < math.log(1 + self.fee_breakevens["three_hop"] / 10000):
+                            # Dynamic breakeven: net gain must clear the real
+                            # fee cost by at least breakeven_margin (e.g. 5%
+                            # of cost), rather than a static three_hop bps
+                            # assumption that doesn't reflect this route's
+                            # actual pools (e.g. an all-Tinyman loop costs
+                            # ~108bps at today's live fees, not the 90bps a
+                            # static config value might assume).
+                            if net_log < fee_cost_log * self.breakeven_margin:
                                 continue
 
                             net_profit_usd = self._estimate_profit_usd(net_log, 500)

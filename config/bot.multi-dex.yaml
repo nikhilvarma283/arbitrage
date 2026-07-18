@@ -56,10 +56,15 @@ gates:
   # Raw spread (before fees)
   spread_gate_bps: 30
 
-  # Fee breakeven thresholds (no flash loans - CHANGE 4)
-  fee_breakeven_bps:
-    two_hop: 60    # 0.6% = 60bps (2 × 0.30% fees)
-    three_hop: 90  # 0.9% = 90bps (3 × 0.30% fees)
+  # Breakeven is computed dynamically per-cycle from each involved pool's
+  # real, live fee_bps (see cycle_detector.py) rather than a static
+  # two_hop/three_hop bps assumption -- Tinyman pools currently charge
+  # 36bps, not the 30bps a static assumption would use, and a 3-hop route
+  # touching a mix of DEXes has a different real cost than an all-Tinyman
+  # loop. breakeven_margin is the required cushion beyond breakeven, as a
+  # fraction of the real fee cost (0.05 = net gain must be at least 5% of
+  # what was actually paid in fees).
+  breakeven_margin: 0.05
 
   # Minimum profit to execute
   min_profit_usd: 0.75
