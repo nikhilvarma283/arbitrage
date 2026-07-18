@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Dict, Optional, List, Tuple
 from decimal import Decimal
 from algosdk.v2client.algod import AlgodClient
+from algosdk.v2client.models.simulate_request import SimulateRequest, SimulateRequestTransactionGroup
 from algosdk import transaction, encoding
 
 logger = logging.getLogger(__name__)
@@ -101,9 +102,18 @@ class CycleSimulator:
                     notes="failed_to_build_txn_group",
                 )
 
-            # Call algod.simulate()
+            # Call algod.simulate() -- unsigned txns wrapped with empty
+            # signatures, since we're not signing/broadcasting for real.
             try:
-                result = self.client.simulate_transactions(txn_group)
+                signed_stub = [
+                    transaction.SignedTransaction(transaction=t, signature=None)
+                    for t in txn_group
+                ]
+                request = SimulateRequest(
+                    txn_groups=[SimulateRequestTransactionGroup(txns=signed_stub)],
+                    allow_empty_signatures=True,
+                )
+                result = self.client.simulate_transactions(request)
                 simulate_pass = result.get("txn-groups", [{}])[0].get("txn-results", [{}])[-1].get("success", False)
             except Exception as e:
                 logger.warning(f"Simulate failed: {e}")
@@ -193,9 +203,8 @@ class CycleSimulator:
 
             assert_txn = transaction.PaymentTxn(
                 sender=self.executor_address,
-                index=params.index + 1,
-                amount=min_final_amount,
                 receiver=self.executor_address,
+                amt=min_final_amount,
                 sp=params,
             )
             txns.append(assert_txn)
@@ -231,6 +240,7 @@ class CycleSimulator:
             app_call = transaction.ApplicationCallTxn(
                 sender=self.executor_address,
                 index=app_id,
+                on_complete=transaction.OnComplete.NoOpOC,
                 app_args=["swap"],
                 foreign_assets=[asset_in, asset_out],
                 sp=params,
