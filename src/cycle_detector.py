@@ -227,9 +227,9 @@ class CycleDetector:
                 for pool1_info in hop1_pools:
                     for pool2_info in hop2_pools:
                         for pool3_info in hop3_pools:
-                            pool1_id, dex1, _ = pool1_info
-                            pool2_id, dex2, _ = pool2_info
-                            pool3_id, dex3, _ = pool3_info
+                            pool1_id, dex1, rev1 = pool1_info
+                            pool2_id, dex2, rev2 = pool2_info
+                            pool3_id, dex3, rev3 = pool3_info
 
                             # Find actual pool states
                             ps1 = next((p for p in pool_states if p.pool_id == pool1_id), None)
@@ -239,8 +239,26 @@ class CycleDetector:
                             if not (ps1 and ps2 and ps3):
                                 continue
 
+                            # log_rate = ln(reserve_a/reserve_b) is only the
+                            # log-gain for traversing a pool in its own
+                            # asset_a -> asset_b direction when reversed is
+                            # True (i.e. this hop's (from,to) matched the
+                            # pool's (asset_b, asset_a), meaning we're
+                            # actually going asset_b -> asset_a = the pool's
+                            # native a/b order). When reversed is False, this
+                            # hop travels asset_a -> asset_b in the pool's
+                            # own terms, which is the *inverse* rate, so the
+                            # log-gain is -log_rate. Without this correction
+                            # roughly half of all traversals get the wrong
+                            # sign, which silently produced wildly incorrect
+                            # "profit" estimates (thousands of dollars on a
+                            # $500 notional) for triangular cycles.
+                            hop1_log = ps1.log_rate if rev1 else -ps1.log_rate
+                            hop2_log = ps2.log_rate if rev2 else -ps2.log_rate
+                            hop3_log = ps3.log_rate if rev3 else -ps3.log_rate
+
                             # Calculate cycle gain
-                            cycle_log = ps1.log_rate + ps2.log_rate + ps3.log_rate
+                            cycle_log = hop1_log + hop2_log + hop3_log
 
                             # Fee stack
                             fee_log = (
