@@ -31,6 +31,7 @@ from src.cycle_detector import CycleDetector
 from src.simulator import CycleSimulator, StalenessAnalyzer
 from src.ledger import Ledger
 from src.pool_discovery import PoolDiscovery
+from src.coinbase_feed import fetch_coinbase_price
 from collections import namedtuple
 
 CycleRecord = namedtuple('CycleRecord', [
@@ -116,7 +117,21 @@ class ArbitrageBotV3:
             "would_execute_count": 0,
             "staleness_total_ms": 0,
             "staleness_count": 0,
+            "cex_checks": 0,
+            "cex_opportunities_detected": 0,
         }
+
+        # CEX-DEX comparison config (see _check_cex_dex_opportunities).
+        # Detection only -- there is no Coinbase account, no API key, and no
+        # order-placement capability anywhere in this bot.
+        gates_cfg = self.config.get("gates", {})
+        self.coinbase_products = gates_cfg.get(
+            "coinbase_products",
+            # (Coinbase product id, matching Algorand stablecoin asset id it's compared against)
+            [("ALGO-USD", 31566704), ("ALGO-USD", 312769)],
+        )
+        self.coinbase_taker_fee_bps = gates_cfg.get("coinbase_taker_fee_bps", 60)
+        self.coinbase_poll_seconds = gates_cfg.get("coinbase_poll_seconds", 10)
 
         # Wire callbacks
         self.watcher.set_callback(self._on_pools_updated)
@@ -252,6 +267,111 @@ class ArbitrageBotV3:
         except Exception as e:
             logger.error(f"Error in pool update callback: {e}")
 
+    def _check_cex_dex_opportunities(self) -> None:
+        """
+        Compare Coinbase's public ALGO-USD price against our Algorand DEX
+        pools for the same nominal pair (ALGO/USDC, ALGO/USDT -- treating
+        USDC/USDT as ~$1, which is the standard stablecoin-peg assumption;
+        an actual USDC/USDT depeg would introduce error here).
+
+        Detection only, same as everything else in this bot: this can log
+        a divergence, but it can never be executed by this code. A real
+        CEX-DEX trade needs two separate, non-atomic legs (an authenticated
+        Coinbase order, and a signed Algorand transaction), with real
+        execution risk between them that an atomic on-chain swap doesn't
+        have. simulate_pass and would_execute are hardcoded False here for
+        that reason -- there is no simulate() equivalent for a CEX leg, and
+        no order-placement capability exists in this bot at all.
+        """
+        try:
+            pool_states = self.watcher.get_all_pool_states()
+            # Group DEX pool states we can compare against a Coinbase product:
+            # any ALGO pool whose *other* asset matches the stablecoin id a
+            # configured Coinbase product is being compared against.
+            checked_products = set()
+
+            for product_id, stable_asset_id in self.coinbase_products:
+                if product_id in checked_products:
+                    continue  # avoid refetching the same product twice per cycle
+                checked_products.add(product_id)
+
+                cex_price = fetch_coinbase_price(product_id)
+                self.stats["cex_checks"] += 1
+                if cex_price is None:
+                    continue
+
+                for ps in pool_states:
+                    # Only ALGO/<stablecoin> pools are comparable to an
+                    # ALGO-USD CEX price; identify ALGO regardless of which
+                    # side of the pool it's stored on.
+                    if ps.asset_a == 0 and ps.asset_b == stable_asset_id:
+                        dex_price = float(ps.reserve_b) / float(ps.reserve_a)
+                    elif ps.asset_b == 0 and ps.asset_a == stable_asset_id:
+                        dex_price = float(ps.reserve_a) / float(ps.reserve_b)
+                    else:
+                        continue
+
+                    if dex_price > cex_price.ask:
+                        # Buy ALGO on Coinbase at ask, sell on the DEX.
+                        gross_gain_frac = (dex_price - cex_price.ask) / cex_price.ask
+                    elif dex_price < cex_price.bid:
+                        # Buy ALGO on the DEX, sell on Coinbase at bid.
+                        gross_gain_frac = (cex_price.bid - dex_price) / dex_price
+                    else:
+                        # dex_price sits inside Coinbase's own bid/ask spread -- no edge.
+                        gross_gain_frac = 0.0
+
+                    if gross_gain_frac <= 0:
+                        continue
+
+                    # Simple additive fee approximation (one DEX swap + one
+                    # CEX taker fill, not a multi-hop log-compounded route
+                    # like the on-chain-only cycles use).
+                    dex_fee_frac = ps.fee_bps / 10000
+                    coinbase_fee_frac = self.coinbase_taker_fee_bps / 10000
+                    total_fee_frac = dex_fee_frac + coinbase_fee_frac
+
+                    net_gain_frac = gross_gain_frac - total_fee_frac
+                    cleared_gate = net_gain_frac >= total_fee_frac * self.detector.breakeven_margin
+
+                    base_size_usd = 500
+                    net_profit_usd = base_size_usd * net_gain_frac if cleared_gate else 0
+
+                    if cleared_gate and net_profit_usd >= self.detector.min_profit_usd:
+                        self.stats["cex_opportunities_detected"] += 1
+                        logger.info(
+                            f"CEX-DEX divergence: {product_id} vs {ps.dex} pool {ps.pool_id} "
+                            f"gross={gross_gain_frac*10000:.1f}bps net=${net_profit_usd:.2f} "
+                            f"(detection only, not executable)"
+                        )
+
+                    record = CycleRecord(
+                        ts_utc=datetime.now(),
+                        block_round=0,
+                        route_id=f"CEX_{product_id}_{ps.pool_id}",
+                        cycle_path=f"{product_id}@coinbase <-> pool {ps.pool_id}@{ps.dex}",
+                        hops=2,
+                        raw_spread_log=gross_gain_frac,
+                        fee_stack_log=total_fee_frac,
+                        net_profit_est_usd=net_profit_usd,
+                        optimal_size_usdc=base_size_usd,
+                        cleared_gate=cleared_gate,
+                        simulate_pass=False,  # no simulate() equivalent for a CEX leg
+                        staleness_ms=0,
+                        would_execute=False,  # no order-placement capability exists
+                        notes="cex_dex_detection_only: two non-atomic legs, not executable by this bot",
+                    )
+                    self.ledger.log_cycle(record)
+
+        except Exception as e:
+            logger.error(f"Error checking CEX-DEX opportunities: {e}")
+
+    def _run_cex_dex_poll_loop(self) -> None:
+        """Background thread: periodically compare Coinbase vs DEX prices."""
+        while self.running:
+            self._check_cex_dex_opportunities()
+            time.sleep(self.coinbase_poll_seconds)
+
     def _setup_query_endpoints(self) -> None:
         """Setup Flask query API endpoints."""
 
@@ -278,6 +398,8 @@ class ArbitrageBotV3:
                 "cycles_simulated": self.stats["cycles_simulated"],
                 "would_execute_count": self.stats["would_execute_count"],
                 "avg_staleness_ms": int(avg_staleness_ms),
+                "cex_checks": self.stats["cex_checks"],
+                "cex_opportunities_detected": self.stats["cex_opportunities_detected"],
             })
 
         @self.app.route("/opportunities", methods=["GET"])
@@ -345,6 +467,15 @@ class ArbitrageBotV3:
         )
         api_thread.start()
         logger.info("Query API started on port 8000")
+
+        # Start CEX-DEX comparison poll in background thread. Coinbase
+        # prices update on their own clock, not per-Algorand-block, so this
+        # runs on a simple timer rather than the event-driven watcher path.
+        cex_thread = threading.Thread(target=self._run_cex_dex_poll_loop, daemon=True)
+        cex_thread.start()
+        logger.info(
+            f"CEX-DEX comparison started (polling every {self.coinbase_poll_seconds}s, detection only)"
+        )
 
         try:
             # Start event-driven pool watcher (blocking)
