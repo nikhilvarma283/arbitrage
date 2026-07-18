@@ -284,7 +284,15 @@ class ArbitrageBotV3:
         no order-placement capability exists in this bot at all.
         """
         try:
-            pool_states = self.watcher.get_all_pool_states()
+            # Same dust-pool floor CycleDetector applies to on-chain cycles
+            # (see min_pool_reserve_raw) -- without it, e.g. the near-dead
+            # Pact ALGO/USDT pool (~$0.001 total reserves) produced a
+            # nonsensical 400%+ "spread" against Coinbase.
+            pool_states = [
+                ps for ps in self.watcher.get_all_pool_states()
+                if ps.reserve_a >= self.detector.min_pool_reserve_raw
+                and ps.reserve_b >= self.detector.min_pool_reserve_raw
+            ]
 
             # Fetch each unique Coinbase product once per poll, then compare
             # it against every configured stablecoin pairing for that
