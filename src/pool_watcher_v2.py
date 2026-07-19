@@ -262,8 +262,14 @@ class PoolWatcherV2:
             assert isinstance(block, dict)  # algod default response format
             block_data = block.get("block", {})
 
-            # Get transactions (handle both formats)
-            txns = block_data.get("txn", []) or block_data.get("txns", [])
+            # block_data["txn"] is the block's transaction-commitment HASH
+            # (a string), not a transaction list -- an easy trap since it's
+            # truthy and sits right next to the real "txns" list. Using
+            # `.get("txn", []) or .get("txns", [])` silently iterated over
+            # individual characters of that hash string instead of real
+            # transactions, so `triggered` below could never actually match
+            # anything. Only "txns" holds the real per-transaction list.
+            txns = block_data.get("txns", [])
 
             if not txns:
                 self.stats["blocks_processed"] += 1
@@ -271,14 +277,20 @@ class PoolWatcherV2:
 
             # Does this block touch any app id relevant to our monitored pools?
             # (a pact-style pool's own app, or a tinyman validator app shared
-            # by potentially many of our tinyman pools)
+            # by potentially many of our tinyman pools). Each block txn's
+            # actual fields (type, apid, ...) live nested one level deeper,
+            # under txn["txn"] -- the outer entry itself only has keys like
+            # dt/hgi/sig/txn, never type/apid directly.
             triggered = False
-            for txn in txns:
-                if not isinstance(txn, dict):
+            for outer_txn in txns:
+                if not isinstance(outer_txn, dict):
+                    continue
+                inner_txn = outer_txn.get("txn", {})
+                if not isinstance(inner_txn, dict):
                     continue
                 if (
-                    txn.get("type") == "appl"
-                    and txn.get("apid") in self.trigger_app_ids
+                    inner_txn.get("type") == "appl"
+                    and inner_txn.get("apid") in self.trigger_app_ids
                 ):
                     triggered = True
                     break
