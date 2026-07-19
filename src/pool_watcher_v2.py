@@ -290,6 +290,34 @@ class PoolWatcherV2:
         except KeyboardInterrupt:
             logger.info("Watcher stopped")
 
+    def _call_with_retry(
+        self, fn: Callable[[], Any], description: str, max_retries: int = 2
+    ) -> Any:
+        """
+        Call fn(), retrying with a short backoff on failure. Confirmed
+        live: AlgoNode's free public endpoint intermittently 403s even
+        well-spaced requests (plausibly load-based on their shared
+        infrastructure, not purely a function of our own request rate) --
+        previously any single such failure meant the block or pool-state
+        update was silently and permanently dropped for that cycle, with
+        no retry at all. Raises the final exception if every attempt fails.
+        """
+        last_exception: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                return fn()
+            except Exception as e:
+                last_exception = e
+                if attempt < max_retries:
+                    delay = 0.5 * (2**attempt)  # 0.5s, then 1.0s
+                    logger.debug(
+                        f"{description} failed (attempt {attempt + 1}/{max_retries + 1}): "
+                        f"{e}, retrying in {delay}s"
+                    )
+                    time.sleep(delay)
+        assert last_exception is not None
+        raise last_exception
+
     def _process_block(self, block_num: int) -> bool:
         """
         Process block and check for pool updates.
@@ -297,7 +325,9 @@ class PoolWatcherV2:
         Returns: True if any pools changed, False otherwise
         """
         try:
-            block = self.client.block_info(block_num)
+            block = self._call_with_retry(
+                lambda: self.client.block_info(block_num), f"block_info({block_num})"
+            )
             assert isinstance(block, dict)  # algod default response format
             block_data = block.get("block", {})
 
@@ -382,7 +412,10 @@ class PoolWatcherV2:
                 address = pool_info["address"]
                 validator_app = pool_info["validator_app"]
 
-                account_info = self.client.account_info(address)
+                account_info = self._call_with_retry(
+                    lambda: self.client.account_info(address),
+                    f"account_info({address})",
+                )
                 assert isinstance(account_info, dict)  # algod default response format
                 kv = {}
                 for app_ls in account_info.get("apps-local-state", []):
@@ -406,7 +439,10 @@ class PoolWatcherV2:
                     reserve_a, reserve_b = asset_2_reserves, asset_1_reserves
 
             else:
-                app_info = self.client.application_info(pool_id)
+                app_info = self._call_with_retry(
+                    lambda: self.client.application_info(pool_id),
+                    f"application_info({pool_id})",
+                )
                 assert isinstance(app_info, dict)  # algod default response format
                 global_state = app_info.get("params", {}).get("global-state", [])
                 kv = _decode_state(global_state)
