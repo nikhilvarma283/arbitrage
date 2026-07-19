@@ -37,6 +37,15 @@ requests==2.31.0
 Flask==3.0.0
 Werkzeug==3.0.1
 
+# Real swap transaction construction (src/dex_execution.py) -- official
+# SDKs, not hand-rolled ABI encoding. Verified against real mainnet pool
+# state via algod.simulate() with a throwaway (unfunded, never-signed-for-
+# real) address: both produce well-formed transaction groups that reach
+# real balance-check logic ("overspend" errors), confirming the encoding
+# itself is correct.
+pactsdk==0.7.1
+git+https://github.com/tinymanorg/tinyman-py-sdk.git@v2.6.0
+
 # Optional dev tooling (notebooks/REPL) is intentionally NOT installed here.
 # jupyter pulls in jupyterlab, whose pip dependency resolution backtracks
 # through dozens of versions and takes 60-80+ seconds even when it succeeds
