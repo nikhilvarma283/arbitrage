@@ -202,16 +202,40 @@ class PoolWatcherV2:
             # Initialize pool states for all configured pools
             self._initialize_pool_states(self.last_block)
 
-            # Main event loop
+            # Main event loop. Uses algod's long-poll wait-for-block-after
+            # endpoint (status_after_block) rather than sleep-and-poll: the
+            # request blocks server-side until the next round actually
+            # completes, so we learn about a new block the instant algod
+            # does, with roughly one request per block instead of one every
+            # fixed interval regardless of whether anything changed.
+            #
+            # This replaced a `client.status()` call every 0.1s, which added
+            # up to ~30 requests per block over a ~2.8-3.4s block time --
+            # confirmed live, after ~10 hours of continuous running, to be
+            # enough sustained volume against the free public AlgoNode
+            # endpoint to trigger intermittent HTTP 403 rate-limiting
+            # (1000+ occurrences across the run), silently dropping
+            # whichever blocks failed instead of retrying them.
             while True:
                 try:
-                    # Check for new blocks (with fallback)
                     try:
-                        status = self.client.status()
+                        status = self.client.status_after_block(self.last_block)
                         assert isinstance(status, dict)  # algod default response format
                         current_block = status["last-round"]
-                    except Exception:
-                        current_block = self._get_block_via_http()
+                    except Exception as e:
+                        logger.debug(
+                            f"status_after_block failed: {e}, falling back to status()"
+                        )
+                        try:
+                            status = self.client.status()
+                            assert isinstance(status, dict)
+                            current_block = status["last-round"]
+                        except Exception:
+                            current_block = self._get_block_via_http()
+                        # Only needed in the fallback path -- the long-poll
+                        # call above already blocks until a new round, so
+                        # there's nothing to avoid hammering in the normal case.
+                        time.sleep(1.0)
 
                     # Detect missed blocks (for metrics)
                     if self.last_block > 0 and current_block > self.last_block + 1:
@@ -240,9 +264,6 @@ class PoolWatcherV2:
 
                         self.last_block = current_block
                         self.stats["blocks_processed"] += 1
-
-                    # Small delay to avoid hammering RPC
-                    time.sleep(0.1)
 
                 except Exception as e:
                     logger.error(f"Error in watcher loop: {e}")
