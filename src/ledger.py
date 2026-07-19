@@ -188,6 +188,37 @@ class Ledger:
             logger.error(f"Failed to log cycle: {e}")
             raise
 
+    def get_cleared_summary(self) -> Dict:
+        """
+        All-time (across every logged cycle, on-chain and CEX-DEX alike)
+        summary of opportunities that actually cleared the fee/spread gates
+        -- i.e. genuine, fee-adjusted arbitrage the bot identified, whether
+        or not it was ever (or could ever be) executed. would_execute is a
+        stricter subset of this (also requires simulate_pass), so this
+        number answers "how much real opportunity has been spotted so far"
+        rather than "how much was actually tradeable."
+        """
+        assert self.conn is not None  # guaranteed by successful __init__
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as cleared_count,
+                    COALESCE(SUM(net_profit_est_usd), 0) as total_profit_usd
+                FROM cycles
+                WHERE cleared_gate
+            """
+            )
+            row = cursor.fetchone()
+            return {
+                "cleared_opportunities_count": row["cleared_count"] or 0,
+                "total_cleared_profit_usd": row["total_profit_usd"] or 0,
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate cleared summary: {e}")
+            return {"cleared_opportunities_count": 0, "total_cleared_profit_usd": 0}
+
     def get_funnel_report(self, start_date: date, end_date: date) -> Dict:
         """
         Generate Gate 0 funnel report (CHANGE 7).

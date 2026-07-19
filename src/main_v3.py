@@ -429,6 +429,14 @@ class ArbitrageBotV3:
                 else 0
             )
 
+            # All-time (across restarts -- the ledger persists on disk)
+            # total of every on-chain and CEX-DEX opportunity that actually
+            # cleared the fee/spread gates, i.e. genuine arbitrage the bot
+            # identified. This is broader than would_execute_count, which
+            # additionally requires simulate_pass -- something CEX-DEX
+            # comparisons can never have (see _check_cex_dex_opportunities).
+            cleared_summary = self.ledger.get_cleared_summary()
+
             return jsonify(
                 {
                     "mode": self.mode,
@@ -445,6 +453,12 @@ class ArbitrageBotV3:
                     "cex_opportunities_detected": self.stats[
                         "cex_opportunities_detected"
                     ],
+                    "cleared_opportunities_count": cleared_summary[
+                        "cleared_opportunities_count"
+                    ],
+                    "total_cleared_profit_usd": round(
+                        cleared_summary["total_cleared_profit_usd"], 2
+                    ),
                 }
             )
 
