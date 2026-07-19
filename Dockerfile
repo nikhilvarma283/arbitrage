@@ -30,9 +30,16 @@ ENV LOG_LEVEL=INFO
 # Expose query API port
 EXPOSE 8000
 
-# Health check
+# Health check -- /health actually validates the bot is working (chain
+# tip not lagging, error rate not elevated, Coinbase feed not stale), not
+# just that the Flask process is alive (which /status alone would confirm
+# even while everything underneath is silently broken -- confirmed this
+# was possible: /status kept responding fine during both the frozen-
+# parsing bug and the rate-limit-403 stretch). Returns HTTP 503 when
+# unhealthy, which curl -f treats as a failure -- `docker ps` will show
+# this container as unhealthy without anyone needing to check logs.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/status || exit 1
+    CMD curl -f http://localhost:8000/health || exit 1
 
 # Run bot v3 (multi-DEX with query API)
 CMD ["python", "-m", "src.main_v3", "--config", "config/bot.multi-dex.yaml"]

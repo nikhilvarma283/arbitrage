@@ -140,6 +140,15 @@ class PoolWatcherV2:
             "missed_blocks": 0,
         }
 
+        # Health tracking: every failure mode actually hit this session
+        # (frozen block-parsing, rate-limit 403 bursts) showed up first as
+        # either the chain tip falling behind real-time, or errors starting
+        # to happen in the loop -- both silent unless someone thinks to
+        # check logs. Tracked here so /health can answer "is this actually
+        # working right now" without anyone needing to grep anything.
+        self.last_block_time: Optional[datetime] = None
+        self.recent_error_times: List[datetime] = []
+
         # Callback for when pools change
         self.on_pools_changed: Optional[Callable] = None
 
@@ -263,10 +272,12 @@ class PoolWatcherV2:
                             )
 
                         self.last_block = current_block
+                        self.last_block_time = datetime.now()
                         self.stats["blocks_processed"] += 1
 
                 except Exception as e:
                     logger.error(f"Error in watcher loop: {e}")
+                    self.recent_error_times.append(datetime.now())
                     time.sleep(5)  # Backoff on error
 
         except KeyboardInterrupt:
@@ -332,6 +343,7 @@ class PoolWatcherV2:
 
         except Exception as e:
             logger.error(f"Error processing block {block_num}: {e}")
+            self.recent_error_times.append(datetime.now())
             return False
 
     def _update_pool_state(self, pool_info: Dict, block_num: int) -> bool:
@@ -441,6 +453,53 @@ class PoolWatcherV2:
     def get_stats(self) -> Dict:
         """Get watcher statistics."""
         return self.stats.copy()
+
+    def get_health(self, error_window_minutes: int = 5) -> Dict:
+        """
+        Live health signal, not just cumulative counters -- answers "is
+        this actually working right now" without anyone needing to grep
+        logs. Codifies the two failure modes actually hit this session:
+        the chain tip silently falling behind real-time (frozen parsing,
+        rate-limit-induced stalls) and errors starting to happen
+        frequently (e.g. a 403 rate-limit burst).
+
+        Queries the real current chain tip fresh on every call rather than
+        trusting self.last_block alone, since a frozen watcher would keep
+        reporting its last-known (stale) position as if it were current.
+        """
+        now = datetime.now()
+
+        try:
+            status = self.client.status()
+            assert isinstance(status, dict)
+            real_current_block = status["last-round"]
+        except Exception as e:
+            return {
+                "chain_lag_blocks": None,
+                "seconds_since_last_block": None,
+                "recent_error_count": len(self.recent_error_times),
+                "error": f"Could not reach algod to check chain tip: {e}",
+            }
+
+        chain_lag_blocks = real_current_block - self.last_block
+
+        seconds_since_last_block = (
+            (now - self.last_block_time).total_seconds()
+            if self.last_block_time
+            else None
+        )
+
+        # Trim and count errors within the rolling window.
+        cutoff = now.timestamp() - error_window_minutes * 60
+        self.recent_error_times = [
+            t for t in self.recent_error_times if t.timestamp() >= cutoff
+        ]
+
+        return {
+            "chain_lag_blocks": chain_lag_blocks,
+            "seconds_since_last_block": seconds_since_last_block,
+            "recent_error_count": len(self.recent_error_times),
+        }
 
     def _get_block_via_http(self) -> int:
         """Fallback: Get current block number via HTTP when SDK fails."""

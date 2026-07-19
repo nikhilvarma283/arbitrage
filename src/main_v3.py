@@ -16,7 +16,7 @@ import sys
 import time
 import json
 from datetime import datetime, date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import yaml
 from pathlib import Path
 from flask import Flask, jsonify
@@ -114,6 +114,7 @@ class ArbitrageBotV3:
             "cex_checks": 0,
             "cex_opportunities_detected": 0,
         }
+        self.last_cex_price: Optional[Any] = None  # for /health's staleness check
 
         # CEX-DEX comparison config (see _check_cex_dex_opportunities).
         # Detection only -- there is no Coinbase account, no API key, and no
@@ -349,6 +350,7 @@ class ArbitrageBotV3:
                 self.stats["cex_checks"] += 1
                 if cex_price is None:
                     continue
+                self.last_cex_price = cex_price  # for /health's staleness check
 
                 for stable_asset_id in stable_asset_ids:
                     for ps in pool_states:
@@ -530,6 +532,65 @@ class ArbitrageBotV3:
                         paper_summary["paper_avg_pnl_per_fill_usd"], 4
                     ),
                 }
+            )
+
+        @self.app.route("/health", methods=["GET"])
+        def health():
+            """
+            Is this actually working right now, not just "is the process
+            alive" -- codifies every failure mode actually hit so far:
+            the chain tip silently falling behind real-time (frozen
+            parsing, rate-limit-induced stalls), errors starting to happen
+            frequently (e.g. a 403 rate-limit burst), and the Coinbase feed
+            going stale (confirmed once already this session to fail
+            silently if untracked). Returns HTTP 503 (not 200) when
+            unhealthy, so both `curl -f` and Docker's own HEALTHCHECK can
+            react to it without parsing JSON.
+            """
+            watcher_health = self.watcher.get_health()
+            reasons = []
+
+            chain_lag = watcher_health.get("chain_lag_blocks")
+            if watcher_health.get("error"):
+                reasons.append(f"cannot reach algod: {watcher_health['error']}")
+            elif chain_lag is not None and chain_lag > 20:
+                reasons.append(
+                    f"chain lag is {chain_lag} blocks (expected near 0 with "
+                    f"the long-poll watcher)"
+                )
+
+            error_count = watcher_health.get("recent_error_count", 0)
+            if error_count > 5:
+                reasons.append(
+                    f"{error_count} watcher errors in the last 5 minutes "
+                    f"(possible rate-limiting or RPC issue)"
+                )
+
+            cex_staleness = None
+            if self.last_cex_price is not None:
+                cex_staleness = self.last_cex_price.staleness_seconds
+                if cex_staleness is not None and cex_staleness > 300:
+                    reasons.append(
+                        f"Coinbase feed is {cex_staleness:.0f}s stale "
+                        f"(> 300s -- confirmed once before to silently "
+                        f"serve frozen data)"
+                    )
+
+            healthy = len(reasons) == 0
+            return (
+                jsonify(
+                    {
+                        "healthy": healthy,
+                        "reasons": reasons,
+                        "chain_lag_blocks": chain_lag,
+                        "seconds_since_last_block": watcher_health.get(
+                            "seconds_since_last_block"
+                        ),
+                        "recent_watcher_error_count": error_count,
+                        "coinbase_staleness_seconds": cex_staleness,
+                    }
+                ),
+                200 if healthy else 503,
             )
 
         @self.app.route("/opportunities", methods=["GET"])
