@@ -2,10 +2,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies. git is required for requirements.txt's
+# tinyman-py-sdk, which has no PyPI release and is only pip-installable
+# via its GitHub source (git+https://...).
 RUN apt-get update && apt-get install -y \
     curl \
     ca-certificates \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first (better caching)
