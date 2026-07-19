@@ -30,7 +30,8 @@ from src.pool_watcher_v2 import PoolWatcherV2
 from src.cycle_detector import CycleDetector
 from src.simulator import CycleSimulator
 from src.ledger import Ledger, CycleRecord
-from src.coinbase_feed import fetch_coinbase_price
+from src.coinbase_feed import fetch_coinbase_price, fetch_recent_trades
+from src.maker_flip_paper import MakerFlipPaperTrader
 
 # Setup logging
 logging.basicConfig(
@@ -136,6 +137,22 @@ class ArbitrageBotV3:
         # comparison uses its own, stricter floor for this reason.
         self.cex_min_pool_reserve_raw = gates_cfg.get(
             "cex_min_pool_reserve_raw", 5_000_000_000
+        )
+
+        # Maker-flip paper trading (src/maker_flip_paper.py): simulates
+        # quoting on Coinbase around DEX-implied fair value and hedging on
+        # a simulated fill, using only real market data. Places no real
+        # orders, signs nothing, touches no real funds -- purely a
+        # backtest-style validation of whether the strategy would have
+        # made money. Reference pool defaults to Tinyman ALGO/USDC (the
+        # deepest pool we track) for fair value + hedge pricing.
+        self.maker_flip_trader = MakerFlipPaperTrader(
+            quote_half_spread_bps=gates_cfg.get("maker_flip_half_spread_bps", 80.0),
+            maker_fee_bps=gates_cfg.get("maker_flip_maker_fee_bps", 0.0),
+            quote_size_usd=gates_cfg.get("maker_flip_quote_size_usd", 500.0),
+        )
+        self.maker_flip_reference_pool_id = gates_cfg.get(
+            "maker_flip_reference_pool_id", 1002590888  # Tinyman ALGO/USDC
         )
 
         # Wire callbacks
@@ -407,10 +424,51 @@ class ArbitrageBotV3:
         )
         self.ledger.log_cycle(record)
 
+    def _tick_maker_flip_paper_trader(self) -> None:
+        """
+        Paper-trade the maker-flip strategy for one poll cycle: fetch real
+        recent Coinbase trades, check them against our current hypothetical
+        quotes (recomputed fresh from the reference pool's live DEX price),
+        and simulate any fills against real DEX reserves. Places no real
+        orders, signs nothing -- see src/maker_flip_paper.py.
+        """
+        try:
+            pool_states = self.watcher.get_all_pool_states()
+            ref_pool = next(
+                (
+                    ps
+                    for ps in pool_states
+                    if ps.pool_id == self.maker_flip_reference_pool_id
+                ),
+                None,
+            )
+            if ref_pool is None:
+                return
+
+            fair_value = float(ref_pool.reserve_b) / float(ref_pool.reserve_a)
+            trades = fetch_recent_trades("ALGO-USD", limit=25)
+            if not trades:
+                return
+
+            fills = self.maker_flip_trader.tick(
+                fair_value=fair_value,
+                trades=trades,
+                dex_reserve_algo=float(ref_pool.reserve_a) / 1_000_000,
+                dex_reserve_usd=float(ref_pool.reserve_b) / 1_000_000,
+                dex_fee_bps=ref_pool.fee_bps,
+            )
+            for fill in fills:
+                self.ledger.log_paper_fill(fill)
+
+        except Exception as e:
+            logger.error(f"Error ticking maker-flip paper trader: {e}")
+
     def _run_cex_dex_poll_loop(self) -> None:
-        """Background thread: periodically compare Coinbase vs DEX prices."""
+        """Background thread: periodically compare Coinbase vs DEX prices
+        and paper-trade the maker-flip strategy."""
         while self.running:
             self._check_cex_dex_opportunities()
+            self._tick_maker_flip_paper_trader()
             time.sleep(self.coinbase_poll_seconds)
 
     def _setup_query_endpoints(self) -> None:
@@ -437,6 +495,11 @@ class ArbitrageBotV3:
             # comparisons can never have (see _check_cex_dex_opportunities).
             cleared_summary = self.ledger.get_cleared_summary()
 
+            # All-time paper-traded maker-flip summary -- simulated fills
+            # only (real market data, no real orders, no real funds). See
+            # src/maker_flip_paper.py.
+            paper_summary = self.ledger.get_paper_trading_summary()
+
             return jsonify(
                 {
                     "mode": self.mode,
@@ -458,6 +521,13 @@ class ArbitrageBotV3:
                     ],
                     "total_cleared_profit_usd": round(
                         cleared_summary["total_cleared_profit_usd"], 2
+                    ),
+                    "paper_fill_count": paper_summary["paper_fill_count"],
+                    "paper_total_pnl_usd": round(
+                        paper_summary["paper_total_pnl_usd"], 4
+                    ),
+                    "paper_avg_pnl_per_fill_usd": round(
+                        paper_summary["paper_avg_pnl_per_fill_usd"], 4
                     ),
                 }
             )

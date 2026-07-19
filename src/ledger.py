@@ -117,6 +117,27 @@ class Ledger:
         """
         )
 
+        # Paper-traded maker-flip fills (src/maker_flip_paper.py) -- simulated
+        # fills only, never a real order or a real hedge; persisted so this
+        # strategy's track record survives restarts, same as everything else.
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS paper_fills (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts_utc DATETIME NOT NULL,
+                cex_side TEXT NOT NULL,
+                cex_price REAL NOT NULL,
+                algo_amount REAL NOT NULL,
+                cex_notional_usd REAL NOT NULL,
+                dex_hedge_notional_usd REAL NOT NULL,
+                maker_fee_usd REAL NOT NULL,
+                dex_fee_bps REAL NOT NULL,
+                net_pnl_usd REAL NOT NULL,
+                trade_id INTEGER NOT NULL
+            )
+        """
+        )
+
         # Funnel aggregation (daily summary)
         cursor.execute(
             """
@@ -187,6 +208,66 @@ class Ledger:
         except Exception as e:
             logger.error(f"Failed to log cycle: {e}")
             raise
+
+    def log_paper_fill(self, fill) -> int:
+        """Log one simulated maker-flip fill (src/maker_flip_paper.PaperFill)."""
+        assert self.conn is not None  # guaranteed by successful __init__
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                INSERT INTO paper_fills
+                (ts_utc, cex_side, cex_price, algo_amount, cex_notional_usd,
+                 dex_hedge_notional_usd, maker_fee_usd, dex_fee_bps, net_pnl_usd, trade_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+                (
+                    fill.ts_utc,
+                    fill.cex_side,
+                    fill.cex_price,
+                    fill.algo_amount,
+                    fill.cex_notional_usd,
+                    fill.dex_hedge_notional_usd,
+                    fill.maker_fee_usd,
+                    fill.dex_fee_bps,
+                    fill.net_pnl_usd,
+                    fill.trade_id,
+                ),
+            )
+            self.conn.commit()
+            assert cursor.lastrowid is not None
+            return cursor.lastrowid
+        except Exception as e:
+            logger.error(f"Failed to log paper fill: {e}")
+            raise
+
+    def get_paper_trading_summary(self) -> Dict:
+        """All-time paper-traded maker-flip summary (persists across restarts)."""
+        assert self.conn is not None  # guaranteed by successful __init__
+        try:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(*) as fill_count,
+                    COALESCE(SUM(net_pnl_usd), 0) as total_pnl_usd,
+                    COALESCE(AVG(net_pnl_usd), 0) as avg_pnl_per_fill_usd
+                FROM paper_fills
+            """
+            )
+            row = cursor.fetchone()
+            return {
+                "paper_fill_count": row["fill_count"] or 0,
+                "paper_total_pnl_usd": row["total_pnl_usd"] or 0,
+                "paper_avg_pnl_per_fill_usd": row["avg_pnl_per_fill_usd"] or 0,
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate paper trading summary: {e}")
+            return {
+                "paper_fill_count": 0,
+                "paper_total_pnl_usd": 0,
+                "paper_avg_pnl_per_fill_usd": 0,
+            }
 
     def get_cleared_summary(self) -> Dict:
         """

@@ -66,6 +66,62 @@ class CexPrice:
         return (self.fetched_at - self.last_trade_time).total_seconds()
 
 
+@dataclass
+class Trade:
+    """A single real, executed Coinbase trade (public market data only)."""
+
+    trade_id: int
+    price: float
+    size: float
+    side: str  # "BUY" or "SELL" (taker side)
+    time: datetime
+
+
+def fetch_recent_trades(
+    product_id: str = "ALGO-USD", limit: int = 25, timeout: float = 5.0
+) -> list:
+    """
+    Fetch the most recent real trades for a product, oldest-problem-free:
+    used by the maker-flip paper trader to check every trade since the
+    last poll against its current hypothetical quotes (a single best_bid/
+    best_ask snapshot per poll could silently miss a real trade that
+    ticked through a quote between polls). Returns [] on any failure.
+    """
+    try:
+        url = (
+            "https://api.coinbase.com/api/v3/brokerage/market/products/"
+            f"{product_id}/ticker?limit={limit}"
+        )
+        resp = requests.get(
+            url,
+            headers={"User-Agent": "arbitrage-bot-shadow-mode/1.0"},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        trades = []
+        for t in data.get("trades") or []:
+            raw_time = t.get("time")
+            if not raw_time:
+                continue
+            trades.append(
+                Trade(
+                    trade_id=int(t["trade_id"]),
+                    price=float(t["price"]),
+                    size=float(t["size"]),
+                    side=t.get("side", ""),
+                    time=datetime.fromisoformat(raw_time.replace("Z", "+00:00")),
+                )
+            )
+        # Coinbase returns newest-first; callers want oldest-first so
+        # processing them in order matches the sequence they actually happened in.
+        trades.reverse()
+        return trades
+    except Exception as e:
+        logger.warning(f"Failed to fetch Coinbase trades for {product_id}: {e}")
+        return []
+
+
 def fetch_coinbase_price(
     product_id: str = "ALGO-USD", timeout: float = 5.0
 ) -> Optional[CexPrice]:
