@@ -176,9 +176,16 @@ class PoolWatcherV2:
         logger.info("Initializing pool states...")
         initialized_count = 0
 
-        for pool_info in self.configured_pools:
+        for i, pool_info in enumerate(self.configured_pools):
             pool_id = pool_info.get("app_id")
             try:
+                # Confirmed live: firing all pool requests back-to-back with
+                # zero delay was enough to trip AlgoNode's public-tier rate
+                # limiting on its own (a fresh restart hit 403s within the
+                # first second, before any other request history could have
+                # been the cause) -- stagger them instead.
+                if i > 0:
+                    time.sleep(0.3)
                 self._update_pool_state(pool_info, block_num)
                 initialized_count += 1
                 logger.debug(f"Initialized pool {pool_id} ({pool_info.get('dex')})")
@@ -331,9 +338,13 @@ class PoolWatcherV2:
                 self.stats["blocks_processed"] += 1
                 return False
 
-            # Re-check all configured pools (cheap: single-digit pool count)
+            # Re-check all configured pools. Staggered for the same reason
+            # as _initialize_pool_states -- firing all requests at once was
+            # enough on its own to trip AlgoNode's public-tier rate limiting.
             pools_changed = False
-            for pool_info in self.configured_pools:
+            for i, pool_info in enumerate(self.configured_pools):
+                if i > 0:
+                    time.sleep(0.3)
                 if self._update_pool_state(pool_info, block_num):
                     pools_changed = True
                     self.stats["pools_updated"] += 1
