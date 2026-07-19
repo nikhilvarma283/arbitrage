@@ -19,7 +19,15 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install black ruff mypy types-requests types-PyYAML
+        # Pinned to match requirements.txt exactly -- this step previously
+        # installed unpinned `black`, which pulls whatever the latest PyPI
+        # release is on the day the job runs. black's default "stable"
+        # style changes across yearly releases, so an unpinned install
+        # here could disagree with the pinned black==23.12.0 every
+        # contributor actually formats against locally, failing this job
+        # for code that black --check already confirms is correctly
+        # formatted.
+        run: pip install black==23.12.0 ruff==0.1.8 mypy==1.7.1 types-requests==2.31.0.10 types-PyYAML==6.0.12.11
 
       - name: Check formatting with black
         run: black --check src/ tests/
