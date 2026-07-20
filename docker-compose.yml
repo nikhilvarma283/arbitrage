@@ -1,38 +1,21 @@
 version: '3.8'
 
 services:
-  # Algorand full node (non-archival, mainnet)
-  algod:
-    image: algorand/algod:latest
-    container_name: arbitrage-algod
-    ports:
-      - "4001:4001"    # Node API
-      - "4002:4002"    # Kmd API
-    environment:
-      - NETWORK=mainnet
-    volumes:
-      - algod_data:/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4001/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
   # Main arbitrage bot v3 (multi-DEX, event-driven, query API)
+  #
+  # Talks to the public AlgoNode mainnet API (config/bot.multi-dex.yaml's
+  # algod_host), not a local node. A local `algod` service used to run
+  # here too -- it was never actually used (nothing pointed at it) and
+  # was found consuming 442% CPU / 3.12TB block I/O syncing mainnet for
+  # no reason, which throttled the whole VPS. Removed.
   bot:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: arbitrage-bot
-    depends_on:
-      - algod
     environment:
       - APP_MODE=shadow
       - LOG_LEVEL=INFO
-      - ALGOD_HOST=algod
-      - ALGOD_PORT=8080
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     ports:
@@ -80,8 +63,6 @@ services:
       - prometheus
 
 volumes:
-  algod_data:
-    driver: local
   bot_data:
     driver: local
   prometheus_data:
