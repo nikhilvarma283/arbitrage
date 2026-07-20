@@ -32,6 +32,7 @@ from src.simulator import CycleSimulator
 from src.ledger import Ledger, CycleRecord
 from src.coinbase_feed import fetch_coinbase_price, fetch_recent_trades
 from src.maker_flip_paper import MakerFlipPaperTrader
+from src.cex_dex_pricing import compute_cex_dex_profit
 
 # Setup logging
 logging.basicConfig(
@@ -127,6 +128,13 @@ class ArbitrageBotV3:
         )
         self.coinbase_taker_fee_bps = gates_cfg.get("coinbase_taker_fee_bps", 60)
         self.coinbase_poll_seconds = gates_cfg.get("coinbase_poll_seconds", 10)
+        self.cex_dex_trade_size_usd = gates_cfg.get("cex_dex_trade_size_usd", 500.0)
+        # Algorand's min txn fee is 1000 microAlgo (~$0.0001); a swap through
+        # an AMM app is a small group (app call + asset transfer/opt-in),
+        # so this pads for a realistic group rather than a single txn. Tiny
+        # in dollar terms at this trade size, but omitting a real cost
+        # entirely -- however small -- isn't honest accounting.
+        self.algorand_network_fee_usd = gates_cfg.get("algorand_network_fee_usd", 0.003)
 
         # CycleDetector's min_pool_reserve_raw (100 tokens/side) is a flat
         # floor tuned to exclude outright-dead pools, not one scaled to this
@@ -365,48 +373,47 @@ class ArbitrageBotV3:
     def _compare_cex_dex_pair(
         self, product_id: str, stable_asset_id: int, cex_price, ps
     ) -> None:
-        """Compare one Coinbase price against one DEX pool state and log the result."""
+        """Compare one Coinbase price against one DEX pool state and log the
+        result. Cost/slippage math lives in src/cex_dex_pricing.py so it can
+        be unit-tested without the whole bot; see that module's docstring
+        for why real execution price (not the pool's marginal spot price)
+        and the Algorand network fee both matter here.
+        """
         # Only ALGO/<stablecoin> pools are comparable to an ALGO-USD CEX
         # price; identify ALGO regardless of which side of the pool it's on.
+        # Reserves converted to human units (6 decimals) to match cex_price.
         if ps.asset_a == 0 and ps.asset_b == stable_asset_id:
-            dex_price = float(ps.reserve_b) / float(ps.reserve_a)
+            reserve_algo = float(ps.reserve_a) / 1_000_000
+            reserve_stable = float(ps.reserve_b) / 1_000_000
         elif ps.asset_b == 0 and ps.asset_a == stable_asset_id:
-            dex_price = float(ps.reserve_a) / float(ps.reserve_b)
+            reserve_algo = float(ps.reserve_b) / 1_000_000
+            reserve_stable = float(ps.reserve_a) / 1_000_000
         else:
             return
 
-        if dex_price > cex_price.ask:
-            # Buy ALGO on Coinbase at ask, sell on the DEX.
-            gross_gain_frac = (dex_price - cex_price.ask) / cex_price.ask
-        elif dex_price < cex_price.bid:
-            # Buy ALGO on the DEX, sell on Coinbase at bid.
-            gross_gain_frac = (cex_price.bid - dex_price) / dex_price
-        else:
-            # dex_price sits inside Coinbase's own bid/ask spread -- no edge.
-            gross_gain_frac = 0.0
-
-        if gross_gain_frac <= 0:
+        comparison = compute_cex_dex_profit(
+            cex_bid=cex_price.bid,
+            cex_ask=cex_price.ask,
+            reserve_algo=reserve_algo,
+            reserve_stable=reserve_stable,
+            dex_fee_bps=ps.fee_bps,
+            trade_size_usd=self.cex_dex_trade_size_usd,
+            coinbase_fee_bps=self.coinbase_taker_fee_bps,
+            algorand_network_fee_usd=self.algorand_network_fee_usd,
+            breakeven_margin=self.detector.breakeven_margin,
+        )
+        if comparison is None:
             return
 
-        # Simple additive fee approximation (one DEX swap + one CEX taker
-        # fill, not a multi-hop log-compounded route like the on-chain-only
-        # cycles use).
-        dex_fee_frac = ps.fee_bps / 10000
-        coinbase_fee_frac = self.coinbase_taker_fee_bps / 10000
-        total_fee_frac = dex_fee_frac + coinbase_fee_frac
-
-        net_gain_frac = gross_gain_frac - total_fee_frac
-        cleared_gate = net_gain_frac >= total_fee_frac * self.detector.breakeven_margin
-
-        base_size_usd = 500
-        net_profit_usd = base_size_usd * net_gain_frac if cleared_gate else 0
-
-        if cleared_gate and net_profit_usd >= self.detector.min_profit_usd:
+        if (
+            comparison.cleared_gate
+            and comparison.net_profit_usd >= self.detector.min_profit_usd
+        ):
             self.stats["cex_opportunities_detected"] += 1
             logger.info(
                 f"CEX-DEX divergence: {product_id} vs {ps.dex} pool {ps.pool_id} "
-                f"gross={gross_gain_frac*10000:.1f}bps net=${net_profit_usd:.2f} "
-                f"(detection only, not executable)"
+                f"net=${comparison.net_profit_usd:.2f} (real execution price incl. "
+                f"slippage, detection only, not executable)"
             )
 
         record = CycleRecord(
@@ -415,11 +422,14 @@ class ArbitrageBotV3:
             route_id=f"CEX_{product_id}_{ps.pool_id}",
             cycle_path=f"{product_id}@coinbase <-> pool {ps.pool_id}@{ps.dex}",
             hops=2,
-            raw_spread_log=gross_gain_frac,
-            fee_stack_log=total_fee_frac,
-            net_profit_est_usd=net_profit_usd,
-            optimal_size_usdc=base_size_usd,
-            cleared_gate=cleared_gate,
+            raw_spread_log=abs(comparison.dex_mid_price - cex_price.mid)
+            / cex_price.mid,
+            fee_stack_log=comparison.total_fee_frac,
+            net_profit_est_usd=(
+                comparison.net_profit_usd if comparison.cleared_gate else 0
+            ),
+            optimal_size_usdc=self.cex_dex_trade_size_usd,
+            cleared_gate=comparison.cleared_gate,
             simulate_pass=False,  # no simulate() equivalent for a CEX leg
             staleness_ms=0,
             would_execute=False,  # no order-placement capability exists
