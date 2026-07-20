@@ -151,6 +151,7 @@ class ArbitrageBotV3:
             quote_half_spread_bps=gates_cfg.get("maker_flip_half_spread_bps", 80.0),
             maker_fee_bps=gates_cfg.get("maker_flip_maker_fee_bps", 0.0),
             quote_size_usd=gates_cfg.get("maker_flip_quote_size_usd", 500.0),
+            hedge_delay_seconds=gates_cfg.get("maker_flip_hedge_delay_seconds", 5.0),
         )
         self.maker_flip_reference_pool_id = gates_cfg.get(
             "maker_flip_reference_pool_id", 1002590888  # Tinyman ALGO/USDC

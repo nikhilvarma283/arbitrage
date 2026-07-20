@@ -22,12 +22,20 @@ Known simplifying assumptions (deliberate, for this first pass):
   of the crossing trade's own size or our position in the order book
   queue (a real resting order could be partially filled, or sit behind
   other orders at the same price and not fill at all).
-- Assumes the hedge executes instantly and completely at the simulated
-  AMM price the moment a fill is detected -- no hedge latency, no
-  slippage from other traders acting on the pool in between.
 - Requotes every tick (matching the poll cadence, currently ~10s) rather
   than continuously -- a real market maker would want much faster requote
   cycles, especially since DEX prices can move between polls.
+
+Hedge latency / adverse selection: the hedge leg is priced using DEX
+reserves observed `hedge_delay_seconds` after the CEX fill is detected,
+not the same-instant reserves used to compute the quote. This matters a
+lot -- a real CEX fill happens because the market just moved, and the
+DEX price is likely moving with it, so the hedge you can actually place
+a few seconds later (real submit + confirm time) is priced worse than
+what was true at quote time. Pricing the hedge off the same snapshot
+used for the quote (the original version of this code did) makes every
+simulated fill deterministically profitable, which live trading will
+not be.
 """
 
 import logging
@@ -65,6 +73,19 @@ def _swap_exact_out(
 
 
 @dataclass
+class PendingFill:
+    """A simulated CEX fill awaiting its delayed DEX hedge."""
+
+    ts_utc: datetime
+    cex_side: str  # "buy_algo" or "sell_algo" (what we did on Coinbase)
+    cex_price: float
+    algo_amount: float
+    cex_notional_usd: float
+    maker_fee_usd: float
+    trade_id: int
+
+
+@dataclass
 class PaperFill:
     """One simulated maker-flip round trip: a CEX fill plus its DEX hedge."""
 
@@ -92,6 +113,7 @@ class MakerFlipPaperTrader:
         quote_half_spread_bps: float = 80.0,
         maker_fee_bps: float = 0.0,
         quote_size_usd: float = 500.0,
+        hedge_delay_seconds: float = 5.0,
     ):
         # Needs to comfortably exceed dex_fee_bps (live, ~30-36bps for our
         # pools) plus maker_fee_bps for a filled round-trip to be
@@ -99,8 +121,13 @@ class MakerFlipPaperTrader:
         self.quote_half_spread_bps = quote_half_spread_bps
         self.maker_fee_bps = maker_fee_bps
         self.quote_size_usd = quote_size_usd
+        # Approximates real submit + on-chain confirmation time for the
+        # hedge transaction (Algorand block time is ~2.8-3.4s; this adds
+        # margin for detecting the fill and building/signing the swap).
+        self.hedge_delay_seconds = hedge_delay_seconds
 
         self.last_seen_trade_id: Optional[int] = None
+        self.pending_fills: List[PendingFill] = []
         self.fills: List[PaperFill] = []
         self.realized_pnl_usd: float = 0.0
 
@@ -118,13 +145,41 @@ class MakerFlipPaperTrader:
         dex_fee_bps: float,
     ) -> List[PaperFill]:
         """
-        Process every real trade since the last tick against our current
-        hypothetical quotes (computed fresh each tick from fair_value).
-        Returns any newly simulated fills from this call.
+        Two jobs per call, in order:
+
+        1. Settle any pending fills whose hedge_delay_seconds has elapsed,
+           pricing the hedge against the CURRENT (later) reserves passed in
+           here -- these reflect however much the DEX price has genuinely
+           moved since the fill was detected.
+        2. Detect any new fills from trades since the last tick, against
+           quotes computed fresh from fair_value. New fills are queued as
+           pending, NOT hedged immediately.
+
+        Returns any fills newly settled in this call.
         """
-        bid, ask = self.current_quotes(fair_value)
+        now = datetime.now(timezone.utc)
         new_fills = []
 
+        still_pending = []
+        for pending in self.pending_fills:
+            elapsed = (now - pending.ts_utc).total_seconds()
+            if elapsed >= self.hedge_delay_seconds:
+                fill = self._settle_fill(
+                    pending, dex_reserve_algo, dex_reserve_usd, dex_fee_bps
+                )
+                new_fills.append(fill)
+                self.fills.append(fill)
+                self.realized_pnl_usd += fill.net_pnl_usd
+                logger.info(
+                    f"Paper fill settled: {fill.cex_side} {fill.algo_amount:.2f} "
+                    f"ALGO @{fill.cex_price:.6f} on Coinbase, hedged "
+                    f"{elapsed:.1f}s later on DEX, net_pnl=${fill.net_pnl_usd:.4f}"
+                )
+            else:
+                still_pending.append(pending)
+        self.pending_fills = still_pending
+
+        bid, ask = self.current_quotes(fair_value)
         for t in trades:
             if (
                 self.last_seen_trade_id is not None
@@ -132,83 +187,86 @@ class MakerFlipPaperTrader:
             ):
                 continue
 
-            fill = None
+            pending_fill = None
             if t.side == "SELL" and t.price <= bid:
                 # A real seller hit bids at/below ours -> our bid fills:
                 # we buy ALGO at `bid`, and must hedge by selling it on the DEX.
-                fill = self._simulate_fill(
-                    cex_side="buy_algo",
-                    cex_price=bid,
-                    dex_reserve_algo=dex_reserve_algo,
-                    dex_reserve_usd=dex_reserve_usd,
-                    dex_fee_bps=dex_fee_bps,
-                    trade_id=t.trade_id,
+                pending_fill = self._detect_fill(
+                    cex_side="buy_algo", cex_price=bid, trade_id=t.trade_id
                 )
             elif t.side == "BUY" and t.price >= ask:
                 # A real buyer lifted asks at/above ours -> our ask fills:
                 # we sell ALGO at `ask`, and must hedge by buying it on the DEX.
-                fill = self._simulate_fill(
-                    cex_side="sell_algo",
-                    cex_price=ask,
-                    dex_reserve_algo=dex_reserve_algo,
-                    dex_reserve_usd=dex_reserve_usd,
-                    dex_fee_bps=dex_fee_bps,
-                    trade_id=t.trade_id,
+                pending_fill = self._detect_fill(
+                    cex_side="sell_algo", cex_price=ask, trade_id=t.trade_id
                 )
 
-            if fill:
-                new_fills.append(fill)
-                self.fills.append(fill)
-                self.realized_pnl_usd += fill.net_pnl_usd
-                logger.info(
-                    f"Paper fill: {fill.cex_side} {fill.algo_amount:.2f} ALGO "
-                    f"@{fill.cex_price:.6f} on Coinbase, hedged on DEX, "
-                    f"net_pnl=${fill.net_pnl_usd:.4f}"
-                )
+            if pending_fill:
+                self.pending_fills.append(pending_fill)
 
             self.last_seen_trade_id = t.trade_id
 
         return new_fills
 
-    def _simulate_fill(
-        self,
-        cex_side: str,
-        cex_price: float,
-        dex_reserve_algo: float,
-        dex_reserve_usd: float,
-        dex_fee_bps: float,
-        trade_id: int,
-    ) -> PaperFill:
+    def _detect_fill(
+        self, cex_side: str, cex_price: float, trade_id: int
+    ) -> PendingFill:
+        """The CEX leg happens live (a real trade crossed our quote), so
+        it's priced immediately. Only the DEX hedge leg is delayed."""
         algo_amount = self.quote_size_usd / cex_price
         cex_notional_usd = algo_amount * cex_price
         maker_fee_usd = cex_notional_usd * (self.maker_fee_bps / 10000)
-
-        if cex_side == "buy_algo":
-            # Now hold algo_amount ALGO from the CEX fill; hedge by selling
-            # it into the DEX pool.
-            dex_hedge_notional_usd = _swap_exact_in(
-                dex_reserve_algo, dex_reserve_usd, algo_amount, dex_fee_bps
-            )
-            net_pnl_usd = dex_hedge_notional_usd - cex_notional_usd - maker_fee_usd
-        else:
-            # Now owe algo_amount ALGO from the CEX fill (sold it); hedge
-            # by buying exactly that amount from the DEX pool.
-            dex_hedge_notional_usd = _swap_exact_out(
-                dex_reserve_usd, dex_reserve_algo, algo_amount, dex_fee_bps
-            )
-            net_pnl_usd = cex_notional_usd - dex_hedge_notional_usd - maker_fee_usd
-
-        return PaperFill(
+        return PendingFill(
             ts_utc=datetime.now(timezone.utc),
             cex_side=cex_side,
             cex_price=cex_price,
             algo_amount=algo_amount,
             cex_notional_usd=cex_notional_usd,
-            dex_hedge_notional_usd=dex_hedge_notional_usd,
             maker_fee_usd=maker_fee_usd,
+            trade_id=trade_id,
+        )
+
+    def _settle_fill(
+        self,
+        pending: PendingFill,
+        dex_reserve_algo: float,
+        dex_reserve_usd: float,
+        dex_fee_bps: float,
+    ) -> PaperFill:
+        if pending.cex_side == "buy_algo":
+            # Now hold algo_amount ALGO from the CEX fill; hedge by selling
+            # it into the DEX pool.
+            dex_hedge_notional_usd = _swap_exact_in(
+                dex_reserve_algo, dex_reserve_usd, pending.algo_amount, dex_fee_bps
+            )
+            net_pnl_usd = (
+                dex_hedge_notional_usd
+                - pending.cex_notional_usd
+                - pending.maker_fee_usd
+            )
+        else:
+            # Now owe algo_amount ALGO from the CEX fill (sold it); hedge
+            # by buying exactly that amount from the DEX pool.
+            dex_hedge_notional_usd = _swap_exact_out(
+                dex_reserve_usd, dex_reserve_algo, pending.algo_amount, dex_fee_bps
+            )
+            net_pnl_usd = (
+                pending.cex_notional_usd
+                - dex_hedge_notional_usd
+                - pending.maker_fee_usd
+            )
+
+        return PaperFill(
+            ts_utc=pending.ts_utc,
+            cex_side=pending.cex_side,
+            cex_price=pending.cex_price,
+            algo_amount=pending.algo_amount,
+            cex_notional_usd=pending.cex_notional_usd,
+            dex_hedge_notional_usd=dex_hedge_notional_usd,
+            maker_fee_usd=pending.maker_fee_usd,
             dex_fee_bps=dex_fee_bps,
             net_pnl_usd=net_pnl_usd,
-            trade_id=trade_id,
+            trade_id=pending.trade_id,
         )
 
     def get_summary(self) -> dict:
